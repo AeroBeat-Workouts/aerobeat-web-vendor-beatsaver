@@ -1,5 +1,5 @@
 # Fixtures
 
-Fixtures in this repository must be deterministic, tiny, and synthetic or metadata-only unless redistribution rights are documented explicitly.
+Committed fixtures must be deterministic, tiny, and synthetic or metadata-only unless redistribution rights are documented explicitly.
 
-`foundation-marker.json` proves scaffold wiring only. It is not a BeatSaver API response, map DTO, archive, or claim that provider behavior is implemented.
+Current validation generates BeatSaver API payloads, v2/v3/v4 metadata ZIPs, and malicious ZIP variants in memory under `scripts/fixture-helpers.js`. No community map, audio, cover, or downloaded archive bytes are committed.

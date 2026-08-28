@@ -1,18 +1,25 @@
 # Decision 0001: Browser BeatSaver Vendor Boundary
 
-**Status:** Accepted for scaffold
+**Status:** Accepted and implemented
 
 ## Decision
 
-`aerobeat-web-vendor-beatsaver` is the replaceable browser-specific BeatSaver provider seam. It may own provider transport, response DTO narrowing, selected-version acquisition, archive inspection, and normalized source-material manifests.
+`aerobeat-web-vendor-beatsaver` is the replaceable browser-specific BeatSaver provider seam. It owns provider transport, strict response DTO narrowing, selected-version acquisition, BeatSaver/SongCore map-content SHA-1 verification, local ZIP intake, archive inspection, and provider-neutral source-material bundles.
 
 It does not own product UI, canonical AeroBeat content contracts, Boxing/Flow conversion, gameplay, library persistence policy, assembly wiring, or community-content redistribution policy.
 
-The initial public surface is a truthful service marker with every executable capability set to `false`. API and archive behavior must land through the linked implementation Bead with deterministic metadata-only fixtures and explicit untrusted-input controls.
+Direct credential-free CORS is the default transport. Fetch and proxy-URL resolution remain injected seams because third-party CORS and availability can change. A local archive path provides product recovery without weakening the same verification/inspection boundary.
+
+## Archive decision
+
+`fflate` 0.8.2 is the only runtime dependency. Package-owned code parses and validates the ZIP central directory before decompression. It enforces HTTPS acquisition, archive/entry/expanded/ratio limits, safe normalized paths, no duplicate case-insensitive paths, no symlinks/encryption/ZIP64/multi-disk input, and supported metadata/difficulty references.
+
+The downstream contract is a closure-backed source bundle with immutable metadata and defensive per-entry reads. It does not expose the original archive, `Response`, provider DTO, or `fflate` object.
 
 ## Consequences
 
-- No provider-native DTO or archive-library object may cross the public boundary.
-- No downloaded map/audio archive may be committed by default.
-- Browser acquisition remains distinct from the existing Godot provider implementation while preserving the same ownership boundary.
-- Product packages consume normalized plain records through public exports only.
+- No provider-native DTO or archive-library object crosses the public boundary.
+- No downloaded map/audio archive is committed by default.
+- Browser acquisition remains distinct from the Godot implementation while sharing golden fixtures and ownership semantics.
+- `aerobeat-web-content-authoring` consumes normalized source manifests and selected entry bytes.
+- Changing ZIP libraries cannot change the public source-bundle contract.

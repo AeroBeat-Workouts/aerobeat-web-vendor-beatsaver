@@ -1,60 +1,57 @@
 // @ts-check
 
-/**
- * Stable BeatSaver provider identifier.
- *
- * @type {"beatsaver"}
- */
+export { BeatSaverVendorError, toBeatSaverVendorError } from "./errors.js";
+export {
+  buildLatestParameters,
+  buildSearchParameters,
+  normalizeMap,
+  normalizeMapCollection,
+  selectVersion
+} from "./normalize.js";
+export { BeatSaverTransport } from "./transport.js";
+export {
+  computeBeatSaverMapHash,
+  defaultBeatSaverArchiveLimits,
+  inspectBeatSaverArchive,
+  normalizeEntryPath,
+  sha1Hex
+} from "./archive.js";
+export { AeroBeatSaverVendorService, beatSaverVendorCapabilities } from "./service.js";
+
+import { AeroBeatSaverVendorService, beatSaverVendorCapabilities } from "./service.js";
+
+/** Stable BeatSaver provider identifier. @type {"beatsaver"} */
 export const beatSaverVendorProviderId = "beatsaver";
-
-/**
- * Stable browser vendor-service identifier.
- *
- * @type {"aero.vendor.beatsaver"}
- */
+/** Stable browser vendor-service identifier. @type {"aero.vendor.beatsaver"} */
 export const beatSaverVendorServiceId = "aero.vendor.beatsaver";
+/** Implemented contract marker. @type {"aero.web-vendor-beatsaver.v1"} */
+export const beatSaverVendorContractId = "aero.web-vendor-beatsaver.v1";
 
 /**
- * Package foundation marker. This is not an implementation-version claim.
- *
- * @type {"aero.web-vendor-beatsaver.foundation.v1"}
- */
-export const beatSaverVendorFoundationId = "aero.web-vendor-beatsaver.foundation.v1";
-
-/**
- * Truthful scaffold capabilities. A later implementation changes these only
- * alongside executable provider behavior and contract coverage.
+ * Plain discovery marker; service state lives in created instances.
  *
  * @type {Readonly<{
- *   transport: false,
- *   dtoNormalization: false,
- *   acquisition: false,
- *   archiveInspection: false
+ *   serviceId: typeof beatSaverVendorServiceId,
+ *   providerId: typeof beatSaverVendorProviderId,
+ *   contractId: typeof beatSaverVendorContractId,
+ *   implementationStatus: "implemented",
+ *   capabilities: typeof beatSaverVendorCapabilities
  * }>}
  */
-export const beatSaverVendorCapabilities = Object.freeze({
-  transport: false,
-  dtoNormalization: false,
-  acquisition: false,
-  archiveInspection: false
-});
-
-/**
- * Plain public service marker for assembly/package discovery.
- *
- * @typedef {Object} BeatSaverVendorServiceMarker
- * @property {typeof beatSaverVendorServiceId} serviceId Stable service ID.
- * @property {typeof beatSaverVendorProviderId} providerId Stable provider ID.
- * @property {typeof beatSaverVendorFoundationId} foundationId Package marker.
- * @property {"scaffold"} implementationStatus Truthful implementation status.
- * @property {typeof beatSaverVendorCapabilities} capabilities Current capabilities.
- */
-
-/** @type {Readonly<BeatSaverVendorServiceMarker>} */
 export const beatSaverVendorServiceMarker = Object.freeze({
   serviceId: beatSaverVendorServiceId,
   providerId: beatSaverVendorProviderId,
-  foundationId: beatSaverVendorFoundationId,
-  implementationStatus: "scaffold",
+  contractId: beatSaverVendorContractId,
+  implementationStatus: "implemented",
   capabilities: beatSaverVendorCapabilities
 });
+
+/**
+ * Create one vendor service for an `aero-game` instance.
+ *
+ * @param {ConstructorParameters<typeof AeroBeatSaverVendorService>[0]} [options] Service options.
+ * @returns {AeroBeatSaverVendorService} Service.
+ */
+export function createAeroBeatSaverVendorService(options) {
+  return new AeroBeatSaverVendorService(options);
+}

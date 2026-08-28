@@ -54,8 +54,8 @@ try {
   assert.equal(response?.ok(), true);
   await page.waitForSelector("#app[data-ready='true']");
   const text = await page.locator("#app").textContent();
-  assert.match(text ?? "", /BeatSaver vendor foundation ready/u);
-  assert.match(text ?? "", /acquisition not implemented/u);
+  assert.match(text ?? "", /BeatSaver vendor implemented/u);
+  assert.match(text ?? "", /idle/u);
   assert.deepEqual(consoleProblems, []);
   assert.deepEqual(externalRequests, []);
 } finally {
