@@ -47,8 +47,7 @@ export class BeatSaverTransport {
   async getBytes(directUrl, options = {}) {
     const maxBytes = boundedInteger(options.maxBytes, 128 * 1024 * 1024, 1, 1024 * 1024 * 1024);
     const response = await this.request(directUrl, { signal: options.signal, accept: "application/zip, application/octet-stream" });
-    const totalHeader = response.headers.get("content-length");
-    const totalBytes = totalHeader === null ? undefined : Number.parseInt(totalHeader, 10);
+    const totalBytes = parseContentLength(response.headers.get("content-length"));
     if (totalBytes !== undefined && Number.isFinite(totalBytes) && totalBytes > maxBytes) {
       throw new BeatSaverVendorError("archive", "BeatSaver archive exceeds download limit", { details: { maxBytes, totalBytes } });
     }
@@ -94,10 +93,12 @@ export class BeatSaverTransport {
    * @returns {Promise<Response>} Response.
    */
   async request(directUrl, options) {
-    if (directUrl.protocol !== "https:") throw new BeatSaverVendorError("invalid_request", "BeatSaver transport requires HTTPS");
-    const resolved = this.proxyUrl === undefined ? directUrl : new URL(this.proxyUrl(new URL(directUrl.href)).toString());
-    if (resolved.protocol !== "https:" && resolved.hostname !== "127.0.0.1" && resolved.hostname !== "localhost") {
-      throw new BeatSaverVendorError("invalid_request", "Configured BeatSaver transport URL must use HTTPS");
+    if (directUrl.protocol !== "https:" || directUrl.username !== "" || directUrl.password !== "") throw new BeatSaverVendorError("invalid_request", "BeatSaver transport requires credential-free HTTPS");
+    let resolved;
+    try { resolved = this.proxyUrl === undefined ? directUrl : new URL(this.proxyUrl(new URL(directUrl.href)).toString()); }
+    catch (error) { throw new BeatSaverVendorError("invalid_request", "Configured BeatSaver proxy returned an invalid URL", { cause: error }); }
+    if (!isSecureTransportUrl(resolved) || resolved.username !== "" || resolved.password !== "") {
+      throw new BeatSaverVendorError("invalid_request", "Configured BeatSaver transport URL must use credential-free HTTPS");
     }
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
       options.signal?.throwIfAborted();
@@ -106,14 +107,20 @@ export class BeatSaverTransport {
       const signal = combineSignals(options.signal, timeoutController.signal);
       this.metrics.requests += 1;
       try {
-        const response = await this.fetch(resolved, {
+        const response = await raceWithSignal(this.fetch(resolved, {
           method: "GET",
           headers: { Accept: options.accept },
           signal,
           credentials: "omit",
           redirect: "follow",
           referrerPolicy: "no-referrer"
-        });
+        }), signal);
+        options.signal?.throwIfAborted();
+        if (timeoutController.signal.aborted) throw new BeatSaverVendorError("timeout", "BeatSaver request timed out");
+        if (response.url !== "") {
+          const finalUrl = new URL(response.url);
+          if (!isSecureTransportUrl(finalUrl) || finalUrl.username !== "" || finalUrl.password !== "") throw new BeatSaverVendorError("transport", "BeatSaver transport followed an insecure redirect");
+        }
         this.metrics.lastStatus = response.status;
         if (response.ok) return response;
         const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
@@ -147,6 +154,19 @@ export class BeatSaverTransport {
   }
 }
 
+/** @param {Promise<Response>} request Request promise. @param {AbortSignal} signal Signal. @returns {Promise<Response>} Bounded response. */
+function raceWithSignal(request, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const aborted = () => reject(signal.reason);
+    signal.addEventListener("abort", aborted, { once: true });
+    request.then(resolve, reject).finally(() => signal.removeEventListener("abort", aborted));
+  });
+}
+/** @param {URL} url URL. @returns {boolean} Whether URL is secure or an explicit loopback development seam. */
+function isSecureTransportUrl(url) { return url.protocol === "https:" || (url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost")); }
+/** @param {string | null} value Header value. @returns {number | undefined} Valid byte length. */
+function parseContentLength(value) { if (value === null || !/^(0|[1-9][0-9]*)$/u.test(value.trim())) return undefined; const parsed = Number(value); return Number.isSafeInteger(parsed) ? parsed : undefined; }
 /** @param {AbortSignal | undefined} first @param {AbortSignal} second @returns {AbortSignal} */
 function combineSignals(first, second) { return first === undefined ? second : AbortSignal.any([first, second]); }
 /** @param {number} status @returns {boolean} */

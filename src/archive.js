@@ -1,6 +1,6 @@
 // @ts-check
 
-import { unzipSync } from "fflate";
+import { Inflate } from "fflate";
 import { BeatSaverVendorError } from "./errors.js";
 import { finiteNumber, optionalArray, optionalRecord, optionalString, requireRecord } from "./normalize.js";
 
@@ -32,27 +32,22 @@ export async function inspectBeatSaverArchive(input, options = {}) {
   const archiveBytes = await readInput(input);
   if (archiveBytes.byteLength > limits.maxArchiveBytes) failArchive("Archive exceeds byte limit", { size: archiveBytes.byteLength, maximum: limits.maxArchiveBytes });
   const centralEntries = parseCentralDirectory(archiveBytes, limits);
-  /** @type {Record<string, Uint8Array>} */
-  let inflated;
-  try {
-    inflated = unzipSync(archiveBytes);
-  } catch (error) {
-    throw new BeatSaverVendorError("archive", "ZIP decompression failed", { cause: error });
-  }
   /** @type {Map<string, Uint8Array>} */
   const dataByPath = new Map();
+  let actualExpandedTotal = 0;
   for (const entry of centralEntries) {
     if (entry.directory) continue;
-    const bytes = inflated[entry.originalPath];
-    if (!(bytes instanceof Uint8Array)) failArchive("ZIP entry was absent after decompression", { path: entry.path });
-    if (bytes.byteLength !== entry.expandedBytes) failArchive("ZIP entry size differs from central directory", { path: entry.path });
-    dataByPath.set(entry.path.toLowerCase(), bytes);
+    const bytes = inflateArchiveEntry(archiveBytes, entry, limits);
+    actualExpandedTotal += bytes.byteLength;
+    if (actualExpandedTotal > limits.maxExpandedBytes) failArchive("Archive exceeds actual expanded byte limit", { size: actualExpandedTotal });
+    if (crc32(bytes) !== entry.crc32) failArchive("ZIP entry CRC-32 does not match central directory", { path: entry.path });
+    dataByPath.set(pathKey(entry.path), bytes);
   }
   const infoEntries = centralEntries.filter((entry) => entry.infoDat && !entry.directory);
   if (infoEntries.length !== 1) failArchive("Archive must contain exactly one Info.dat", { candidates: infoEntries.length });
   const infoEntry = /** @type {InternalArchiveEntry} */ (infoEntries[0]);
   if (infoEntry.expandedBytes > limits.maxInfoBytes) failArchive("Info.dat exceeds byte limit", { size: infoEntry.expandedBytes });
-  const infoBytes = dataByPath.get(infoEntry.path.toLowerCase());
+  const infoBytes = dataByPath.get(pathKey(infoEntry.path));
   if (infoBytes === undefined) failArchive("Info.dat could not be read");
   const info = parseJson(infoBytes, "Info.dat");
   const manifest = buildSourceManifest(info, infoEntry.path, centralEntries, archiveBytes.byteLength);
@@ -61,7 +56,7 @@ export async function inspectBeatSaverArchive(input, options = {}) {
     manifest,
     listEntryPaths: () => availablePaths,
     readEntry: (path) => {
-      const normalized = normalizeEntryPath(path).toLowerCase();
+      const normalized = pathKey(normalizeEntryPath(path));
       const bytes = dataByPath.get(normalized);
       if (bytes === undefined) throw new BeatSaverVendorError("invalid_request", "Archive entry does not exist", { details: { path } });
       return bytes.slice();
@@ -96,7 +91,7 @@ export async function computeBeatSaverMapHash(source) {
   return sha1Hex(combined);
 }
 
-/** @typedef {BeatSaverArchiveEntry & Readonly<{originalPath: string}>} InternalArchiveEntry */
+/** @typedef {BeatSaverArchiveEntry & Readonly<{originalPath: string, flags: number, crc32: number, localHeaderOffset: number, dataOffset: number, dataEnd: number, recordEnd: number}>} InternalArchiveEntry */
 
 /**
  * @param {Uint8Array} bytes ZIP bytes.
@@ -126,23 +121,32 @@ function parseCentralDirectory(bytes, limits) {
     const madeBy = view.getUint16(cursor + 4, true);
     const flags = view.getUint16(cursor + 8, true);
     const method = view.getUint16(cursor + 10, true);
+    const crc = view.getUint32(cursor + 16, true);
     const compressedBytes = view.getUint32(cursor + 20, true);
     const expandedBytes = view.getUint32(cursor + 24, true);
     const nameLength = view.getUint16(cursor + 28, true);
     const extraLength = view.getUint16(cursor + 30, true);
     const commentLength = view.getUint16(cursor + 32, true);
+    const diskStart = view.getUint16(cursor + 34, true);
     const externalAttributes = view.getUint32(cursor + 38, true);
+    const localHeaderOffset = view.getUint32(cursor + 42, true);
     const end = cursor + 46 + nameLength + extraLength + commentLength;
     if (end > bytes.byteLength) failArchive("Central directory entry extends beyond archive", { index });
     if ((flags & 0x0001) !== 0 || (flags & 0x0040) !== 0) failArchive("Encrypted ZIP entries are unsupported", { index });
     if (method !== 0 && method !== 8) failArchive("ZIP compression method is unsupported", { index, method });
-    if (compressedBytes === 0xffffffff || expandedBytes === 0xffffffff) failArchive("ZIP64 entries are unsupported", { index });
+    if (diskStart !== 0) failArchive("Multi-disk ZIP entries are unsupported", { index });
+    if (compressedBytes === 0xffffffff || expandedBytes === 0xffffffff || localHeaderOffset === 0xffffffff) failArchive("ZIP64 entries are unsupported", { index });
+    validateExtraFields(bytes.subarray(cursor + 46 + nameLength, cursor + 46 + nameLength + extraLength), index);
     const originalPath = decodeName(bytes.subarray(cursor + 46, cursor + 46 + nameLength));
     const path = normalizeEntryPath(originalPath);
     const directory = path.endsWith("/");
     const unixHost = (madeBy >>> 8) === 3;
     const unixMode = (externalAttributes >>> 16) & 0xffff;
-    if (unixHost && (unixMode & 0xf000) === 0xa000) failArchive("Symbolic links are unsupported", { path });
+    const unixType = unixMode & 0xf000;
+    if (unixHost && unixType === 0xa000) failArchive("Symbolic links are unsupported", { path });
+    if (unixHost && unixType !== 0 && unixType !== 0x4000 && unixType !== 0x8000) failArchive("Special ZIP filesystem entries are unsupported", { path });
+    if (unixHost && ((directory && unixType === 0x8000) || (!directory && unixType === 0x4000))) failArchive("ZIP directory mode disagrees with its path", { path });
+    if (!directory && (externalAttributes & 0x10) !== 0) failArchive("ZIP directory attributes disagree with its path", { path });
     if (!directory) {
       if (expandedBytes > limits.maxEntryBytes) failArchive("ZIP entry exceeds expanded byte limit", { path, size: expandedBytes });
       const ratio = compressedBytes === 0 ? (expandedBytes === 0 ? 1 : Number.POSITIVE_INFINITY) : expandedBytes / compressedBytes;
@@ -150,11 +154,20 @@ function parseCentralDirectory(bytes, limits) {
       expandedTotal += expandedBytes;
       if (expandedTotal > limits.maxExpandedBytes) failArchive("Archive exceeds total expanded byte limit", { size: expandedTotal });
     }
-    const caseKey = path.toLowerCase();
+    const caseKey = pathKey(path);
     if (seen.has(caseKey)) failArchive("Archive contains duplicate normalized paths", { path });
     seen.add(caseKey);
     const basename = path.endsWith("/") ? "" : path.slice(path.lastIndexOf("/") + 1);
     const extension = basename.includes(".") ? basename.slice(basename.lastIndexOf(".") + 1).toLowerCase() : "";
+    const local = validateLocalEntry(bytes, centralOffset, index, {
+      originalPath,
+      flags,
+      method,
+      crc,
+      compressedBytes,
+      expandedBytes,
+      localHeaderOffset
+    });
     entries.push(Object.freeze({
       originalPath,
       path,
@@ -167,11 +180,21 @@ function parseCentralDirectory(bytes, limits) {
       infoDat: basename.toLowerCase() === "info.dat",
       audioCandidate: ["egg", "ogg", "wav", "mp3"].includes(extension),
       coverCandidate: ["png", "jpg", "jpeg", "webp"].includes(extension),
-      difficultyCandidate: ["dat", "json"].includes(extension) && basename.toLowerCase() !== "info.dat"
+      difficultyCandidate: ["dat", "json"].includes(extension) && basename.toLowerCase() !== "info.dat",
+      flags,
+      crc32: crc,
+      localHeaderOffset,
+      dataOffset: local.dataOffset,
+      dataEnd: local.dataEnd,
+      recordEnd: local.recordEnd
     }));
     cursor = end;
   }
   if (cursor !== centralOffset + centralSize) failArchive("Central directory size does not match entries");
+  const ranges = [...entries].sort((left, right) => left.localHeaderOffset - right.localHeaderOffset);
+  for (let index = 1; index < ranges.length; index += 1) {
+    if ((ranges[index - 1]?.recordEnd ?? 0) > (ranges[index]?.localHeaderOffset ?? 0)) failArchive("ZIP local entry ranges overlap");
+  }
   return Object.freeze(entries);
 }
 
@@ -197,7 +220,7 @@ function buildSourceManifest(info, infoPath, entries, archiveBytes) {
     for (const candidate of [beatmapPath, lightshowPath]) {
       if (!candidate) continue;
       const resolved = resolveArchivePath(candidate, entries, "hash input");
-      const key = resolved.toLowerCase();
+      const key = pathKey(resolved);
       if (!seenHashPaths.has(key)) { hashInputPaths.push(resolved); seenHashPaths.add(key); }
     }
   }
@@ -225,7 +248,7 @@ function buildSourceManifest(info, infoPath, entries, archiveBytes) {
   const coverName = optionalString(info.coverImageFilename) || optionalString(info._coverImageFilename);
   const audioPath = resolveArchivePath(audioName, entries, "audio");
   const coverPath = coverName ? resolveArchivePath(coverName, entries, "cover") : "";
-  const publicEntries = entries.map(({ originalPath: _originalPath, ...entry }) => entry);
+  const publicEntries = entries.map(({ originalPath: _originalPath, flags: _flags, crc32: _crc32, localHeaderOffset: _localHeaderOffset, dataOffset: _dataOffset, dataEnd: _dataEnd, recordEnd: _recordEnd, ...entry }) => Object.freeze(entry));
   const expandedBytes = entries.reduce((sum, entry) => sum + (entry.directory ? 0 : entry.expandedBytes), 0);
   return Object.freeze({
     schemaId: "aerobeat.beatsaver-source-manifest.v1",
@@ -279,16 +302,16 @@ function detectFormatMajor(version, info) {
 
 /** @param {string} requested @param {readonly InternalArchiveEntry[]} entries @param {string} role @returns {string} */
 function resolveArchivePath(requested, entries, role) {
-  const normalized = normalizeEntryPath(requested).toLowerCase();
-  const match = entries.find((entry) => !entry.directory && entry.path.toLowerCase() === normalized);
+  const normalized = pathKey(normalizeEntryPath(requested));
+  const match = entries.find((entry) => !entry.directory && pathKey(entry.path) === normalized);
   if (match === undefined) throw new BeatSaverVendorError("provider_payload", `Info.dat ${role} path is absent from archive`, { details: { path: requested } });
   return match.path;
 }
 
 /** @param {string} value @returns {string} */
 export function normalizeEntryPath(value) {
-  if (typeof value !== "string" || value.length === 0 || value.includes("\0")) failArchive("ZIP entry path is invalid");
-  const path = value.replaceAll("\\", "/");
+  if (typeof value !== "string" || value.length === 0 || /[\p{Cc}\p{Cf}]/u.test(value)) failArchive("ZIP entry path contains forbidden control characters");
+  const path = value.replaceAll("\\", "/").normalize("NFC");
   if (path.startsWith("/") || /^[a-zA-Z]:\//u.test(path)) failArchive("Absolute ZIP entry paths are forbidden", { path });
   const directory = path.endsWith("/");
   const parts = path.split("/").filter((part) => part !== "" && part !== ".");
@@ -299,13 +322,118 @@ export function normalizeEntryPath(value) {
   return normalized;
 }
 
+/** @param {string} path @returns {string} */
+function pathKey(path) { return path.normalize("NFC").toLowerCase(); }
+
+/**
+ * @param {Uint8Array} bytes Archive bytes.
+ * @param {number} centralOffset Central directory offset.
+ * @param {number} index Entry index.
+ * @param {Readonly<{originalPath: string, flags: number, method: number, crc: number, compressedBytes: number, expandedBytes: number, localHeaderOffset: number}>} entry Central metadata.
+ * @returns {Readonly<{dataOffset: number, dataEnd: number, recordEnd: number}>} Validated local range.
+ */
+function validateLocalEntry(bytes, centralOffset, index, entry) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const offset = entry.localHeaderOffset;
+  if (offset + 30 > centralOffset || view.getUint32(offset, true) !== 0x04034b50) failArchive("ZIP local header is malformed", { index });
+  const flags = view.getUint16(offset + 6, true);
+  const method = view.getUint16(offset + 8, true);
+  const localCrc = view.getUint32(offset + 14, true);
+  const localCompressed = view.getUint32(offset + 18, true);
+  const localExpanded = view.getUint32(offset + 22, true);
+  const nameLength = view.getUint16(offset + 26, true);
+  const extraLength = view.getUint16(offset + 28, true);
+  const dataOffset = offset + 30 + nameLength + extraLength;
+  const dataEnd = dataOffset + entry.compressedBytes;
+  if (dataOffset > centralOffset || dataEnd > centralOffset) failArchive("ZIP local entry extends into the central directory", { index });
+  if (flags !== entry.flags) failArchive("ZIP local and central flags disagree", { index });
+  if (method !== entry.method) failArchive("ZIP local and central compression methods disagree", { index });
+  const localName = decodeName(bytes.subarray(offset + 30, offset + 30 + nameLength));
+  if (localName !== entry.originalPath) failArchive("ZIP local and central filenames disagree", { index });
+  validateExtraFields(bytes.subarray(offset + 30 + nameLength, dataOffset), index);
+  const descriptor = (flags & 0x0008) !== 0;
+  if (!descriptor) {
+    if (localCrc !== entry.crc || localCompressed !== entry.compressedBytes || localExpanded !== entry.expandedBytes) failArchive("ZIP local and central sizes or CRC disagree", { index });
+    return Object.freeze({ dataOffset, dataEnd, recordEnd: dataEnd });
+  }
+  if ((localCrc !== 0 && localCrc !== entry.crc) || (localCompressed !== 0 && localCompressed !== entry.compressedBytes) || (localExpanded !== 0 && localExpanded !== entry.expandedBytes)) failArchive("ZIP descriptor entry has conflicting local metadata", { index });
+  const recordEnd = validateDataDescriptor(view, dataEnd, centralOffset, entry, index);
+  return Object.freeze({ dataOffset, dataEnd, recordEnd });
+}
+
+/**
+ * @param {DataView} view Archive view.
+ * @param {number} offset Descriptor offset.
+ * @param {number} centralOffset Central directory offset.
+ * @param {Readonly<{crc: number, compressedBytes: number, expandedBytes: number}>} entry Entry metadata.
+ * @param {number} index Entry index.
+ * @returns {number} Descriptor end.
+ */
+function validateDataDescriptor(view, offset, centralOffset, entry, index) {
+  if (offset + 12 <= centralOffset && view.getUint32(offset, true) === entry.crc && view.getUint32(offset + 4, true) === entry.compressedBytes && view.getUint32(offset + 8, true) === entry.expandedBytes) return offset + 12;
+  if (offset + 16 <= centralOffset && view.getUint32(offset, true) === 0x08074b50 && view.getUint32(offset + 4, true) === entry.crc && view.getUint32(offset + 8, true) === entry.compressedBytes && view.getUint32(offset + 12, true) === entry.expandedBytes) return offset + 16;
+  failArchive("ZIP data descriptor disagrees with central directory", { index });
+}
+
+/** @param {Uint8Array} extra Extra field bytes. @param {number} index Entry index. @returns {void} */
+function validateExtraFields(extra, index) {
+  const view = new DataView(extra.buffer, extra.byteOffset, extra.byteLength);
+  let cursor = 0;
+  while (cursor < extra.byteLength) {
+    if (cursor + 4 > extra.byteLength) failArchive("ZIP extra field is malformed", { index });
+    const id = view.getUint16(cursor, true);
+    const length = view.getUint16(cursor + 2, true);
+    cursor += 4;
+    if (cursor + length > extra.byteLength) failArchive("ZIP extra field extends beyond its record", { index });
+    if (id === 0x0001) failArchive("ZIP64 entries are unsupported", { index });
+    cursor += length;
+  }
+}
+
+/** @param {Uint8Array} archive Archive bytes. @param {InternalArchiveEntry} entry Entry. @param {BeatSaverArchiveLimits} limits Limits. @returns {Uint8Array} Expanded bytes. */
+function inflateArchiveEntry(archive, entry, limits) {
+  const compressed = archive.subarray(entry.dataOffset, entry.dataEnd);
+  if (entry.compressionMethod === 0) {
+    if (compressed.byteLength !== entry.expandedBytes) failArchive("Stored ZIP entry size differs from central directory", { path: entry.path });
+    return Uint8Array.from(compressed);
+  }
+  /** @type {Uint8Array[]} */
+  const chunks = [];
+  let actualBytes = 0;
+  const inflater = new Inflate((chunk) => {
+    actualBytes += chunk.byteLength;
+    if (actualBytes > entry.expandedBytes || actualBytes > limits.maxEntryBytes) failArchive("DEFLATE output exceeds declared or configured size", { path: entry.path, size: actualBytes });
+    chunks.push(Uint8Array.from(chunk));
+  });
+  try {
+    const chunkSize = 16 * 1024;
+    if (compressed.byteLength === 0) inflater.push(compressed, true);
+    for (let offset = 0; offset < compressed.byteLength; offset += chunkSize) inflater.push(compressed.subarray(offset, Math.min(compressed.byteLength, offset + chunkSize)), offset + chunkSize >= compressed.byteLength);
+  } catch (error) {
+    if (error instanceof BeatSaverVendorError) throw error;
+    throw new BeatSaverVendorError("archive", "ZIP DEFLATE decompression failed", { cause: error, details: { path: entry.path } });
+  }
+  if (actualBytes !== entry.expandedBytes) failArchive("DEFLATE output size differs from central directory", { path: entry.path, size: actualBytes });
+  return concatenateBytes(chunks, actualBytes);
+}
+
+/** @param {readonly Uint8Array[]} chunks Chunks. @param {number} length Length. @returns {Uint8Array} Bytes. */
+function concatenateBytes(chunks, length) { const bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; } return bytes; }
+
+const CRC32_TABLE = (() => { const table = new Uint32Array(256); for (let index = 0; index < 256; index += 1) { let value = index; for (let bit = 0; bit < 8; bit += 1) value = (value & 1) !== 0 ? 0xedb88320 ^ (value >>> 1) : value >>> 1; table[index] = value >>> 0; } return table; })();
+/** @param {Uint8Array} bytes Bytes. @returns {number} Unsigned CRC-32. */
+function crc32(bytes) { let value = 0xffffffff; for (const byte of bytes) value = (CRC32_TABLE[(value ^ byte) & 0xff] ?? 0) ^ (value >>> 8); return (value ^ 0xffffffff) >>> 0; }
+
 /** @param {DataView} view @returns {number} */
 function findEndOfCentralDirectory(view) {
   const minimum = Math.max(0, view.byteLength - 65_557);
   for (let offset = view.byteLength - 22; offset >= minimum; offset -= 1) {
     if (view.getUint32(offset, true) !== 0x06054b50) continue;
     const commentLength = view.getUint16(offset + 20, true);
-    if (offset + 22 + commentLength === view.byteLength) return offset;
+    if (offset + 22 + commentLength === view.byteLength) {
+      if (offset >= 20 && view.getUint32(offset - 20, true) === 0x07064b50) failArchive("ZIP64 archives are unsupported");
+      return offset;
+    }
   }
   failArchive("ZIP end-of-central-directory record was not found");
 }

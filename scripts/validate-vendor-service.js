@@ -74,4 +74,65 @@ aborted.abort();
 await assert.rejects(() => service.getMapById("a1b2c", { signal: aborted.signal }), (error) => error instanceof Error && "code" in error && error.code === "aborted");
 assert.equal(service.snapshot().phase, "idle");
 assert.equal(service.snapshot().capabilities.archiveInspection, true);
+
+for (const operation of [
+  () => service.getMapById(/** @type {never} */ (3)),
+  () => service.searchMaps(/** @type {never} */ ({ page: Number.NaN })),
+  () => service.searchMaps(/** @type {never} */ ({ text: 3 })),
+  () => service.searchMaps(/** @type {never} */ ({ tags: [3] })),
+  () => service.searchMaps(/** @type {never} */ ({ difficulty: 3 })),
+  () => service.listLatestMaps(/** @type {never} */ ({ before: 3 }))
+]) {
+  await assert.rejects(operation, hasCode("invalid_request"));
+}
+assert.throws(() => normalizeMap(new (class ProviderClass {})()), hasCode("provider_payload"));
+assert.throws(() => createAeroBeatSaverVendorService({ apiBaseUrl: "not a URL" }), hasCode("invalid_request"));
+assert.throws(() => createAeroBeatSaverVendorService({ apiBaseUrl: "https://user:secret@api.example.invalid/" }), hasCode("invalid_request"));
+const normalizedWithExtra = normalizeMap({ ...mapPayload, rawProviderSecret: "do-not-leak" });
+assert.equal(Object.hasOwn(normalizedWithExtra, "rawProviderSecret"), false);
+assert.equal(normalizedWithExtra.versions[0]?.key, "A1B2C");
+assert.equal((await service.acquireVersion(detail, "a1b2c")).version.hash, hash);
+
+assert.equal((await service.importLocalArchive(archive)).sourceHash, hash);
+assert.equal((await service.importLocalArchive(archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength))).sourceHash, hash);
+await assert.rejects(() => service.importLocalArchive(/** @type {never} */ ("not bytes")), hasCode("invalid_request"));
+
+const ignoringFetch = new BeatSaverTransport({
+  timeoutMs: 100,
+  maxRetries: 0,
+  fetch: async () => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return Response.json(mapPayload);
+  }
+});
+const timeoutStartedAt = Date.now();
+await assert.rejects(() => ignoringFetch.getJson(new URL("https://timeout.example.invalid/map")), hasCode("timeout"));
+assert.ok(Date.now() - timeoutStartedAt < 140, "timeout must not trust an injected fetch that ignores AbortSignal");
+
+const insecureRedirect = new BeatSaverTransport({ maxRetries: 0, fetch: async () => {
+  const response = Response.json(mapPayload);
+  Object.defineProperty(response, "url", { value: "http://redirect.example.invalid/map" });
+  return response;
+} });
+await assert.rejects(() => insecureRedirect.getJson(new URL("https://api.example.invalid/map")), hasCode("transport"));
+await assert.rejects(() => new BeatSaverTransport({ proxyUrl: () => "http://proxy.example.invalid/fetch" }).getJson(new URL("https://api.example.invalid/map")), hasCode("invalid_request"));
+await assert.rejects(() => new BeatSaverTransport({ proxyUrl: () => "not a URL" }).getJson(new URL("https://api.example.invalid/map")), hasCode("invalid_request"));
+
+/** @type {{phase: "download", loadedBytes: number, totalBytes: number | undefined} | undefined} */
+let malformedLengthProgress;
+const malformedLengthTransport = new BeatSaverTransport({ fetch: async () => new Response(Uint8Array.of(1, 2, 3), { headers: { "content-length": "-7" } }) });
+await malformedLengthTransport.getBytes(new URL("https://cdn.example.invalid/map.zip"), { onProgress: (event) => { malformedLengthProgress = event; } });
+assert.equal(malformedLengthProgress?.totalBytes, undefined);
+const oversizedLengthTransport = new BeatSaverTransport({ fetch: async () => new Response(Uint8Array.of(1), { headers: { "content-length": "999" } }) });
+await assert.rejects(() => oversizedLengthTransport.getBytes(new URL("https://cdn.example.invalid/map.zip"), { maxBytes: 10 }), hasCode("archive"));
+
+const retryAbort = new AbortController();
+const cappedRetryTransport = new BeatSaverTransport({ maxRetries: 1, fetch: async () => new Response("busy", { status: 429, headers: { "retry-after": "999999" } }) });
+setTimeout(() => retryAbort.abort(), 10);
+await assert.rejects(() => cappedRetryTransport.getJson(new URL("https://api.example.invalid/map"), { signal: retryAbort.signal }), hasCode("aborted"));
+assert.equal(cappedRetryTransport.snapshotTelemetry().retries, 1);
+
 console.log("BeatSaver vendor service validation passed.");
+
+/** @param {string} code Error code. @returns {(error: unknown) => boolean} Predicate. */
+function hasCode(code) { return (error) => error instanceof Error && "code" in error && error.code === code; }

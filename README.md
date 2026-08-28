@@ -42,7 +42,7 @@ The manifest includes source format major, Info.dat path, song/audio/cover metad
 
 ## Transport
 
-The default path uses browser `fetch` against HTTPS BeatSaver API/CDN URLs with credentials omitted. A caller may inject a fetch-compatible transport or `proxyUrl(URL)` resolver. Operations accept `AbortSignal`; downloads report bounded byte progress. Timeouts, transient network failures, and HTTP 429/502/503/504 use bounded retry; 429 honors `Retry-After` up to 60 seconds.
+The default path uses browser `fetch` against credential-free HTTPS BeatSaver API/CDN URLs with credentials omitted. A caller may inject a fetch-compatible transport or `proxyUrl(URL)` resolver; production and final redirected URLs remain HTTPS, while HTTP is accepted only for explicit localhost proxy development. Operations accept `AbortSignal`; a package-owned race enforces deadlines even when an injected fetch ignores its signal. Downloads validate content length when present and report bounded byte progress. Timeouts, transient network failures, and HTTP 429/502/503/504 use bounded retry; 429 honors `Retry-After` up to 60 seconds.
 
 ## Archive Security Limits
 
@@ -55,9 +55,9 @@ Defaults are exported as `defaultBeatSaverArchiveLimits`:
 - compression ratio: 200:1;
 - Info.dat: 2 MiB.
 
-Inspection rejects absolute paths, parent traversal, duplicate case-insensitive normalized paths, invalid UTF-8 names, symlinks, encryption, multi-disk/ZIP64 input, unsupported compression, malformed central directories, entry/total/ratio excess, missing or multiple Info.dat files, missing referenced files, unsupported metadata versions, and maps without a supported `Standard` difficulty.
+Inspection rejects absolute paths, parent traversal, control/format characters, duplicate case-insensitive Unicode-normalized paths, invalid UTF-8 names, symlinks/special files, encryption, multi-disk/ZIP64 input, unsupported compression, malformed central/local headers, filename/method/flag/size mismatches, overlapping local ranges, malformed data descriptors, CRC corruption, entry/total/ratio excess, missing or multiple Info.dat files, missing referenced files, unsupported metadata versions, and maps without a supported `Standard` difficulty.
 
-`fflate` 0.8.2 performs decompression only after the package-owned central-directory policy validates metadata and limits.
+`fflate` 0.8.2 performs bounded per-entry streaming DEFLATE only after package-owned central-directory and local-header policy validates metadata, ranges, descriptors, and declared limits. Actual output length and CRC-32 are verified before an entry becomes readable; the implementation does not call whole-archive `unzipSync`.
 
 ## Validation
 

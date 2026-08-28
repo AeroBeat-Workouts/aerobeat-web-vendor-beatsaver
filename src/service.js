@@ -18,8 +18,10 @@ export class AeroBeatSaverVendorService {
    * @param {{apiBaseUrl?: string, transport?: BeatSaverTransport, fetch?: import("./transport.js").BeatSaverFetch, proxyUrl?: (url: URL) => string | URL, timeoutMs?: number, maxRetries?: number, retryBaseMs?: number, maxDownloadBytes?: number, archiveLimits?: Partial<import("./archive.js").BeatSaverArchiveLimits>}} [options] Options.
    */
   constructor(options = {}) {
-    const apiBaseUrl = new URL(options.apiBaseUrl ?? "https://api.beatsaver.com/");
-    if (apiBaseUrl.protocol !== "https:") throw new BeatSaverVendorError("invalid_request", "BeatSaver API base URL must use HTTPS");
+    let apiBaseUrl;
+    try { apiBaseUrl = new URL(options.apiBaseUrl ?? "https://api.beatsaver.com/"); }
+    catch (error) { throw new BeatSaverVendorError("invalid_request", "BeatSaver API base URL must be a valid URL", { cause: error }); }
+    if (apiBaseUrl.protocol !== "https:" || apiBaseUrl.username !== "" || apiBaseUrl.password !== "") throw new BeatSaverVendorError("invalid_request", "BeatSaver API base URL must use credential-free HTTPS");
     this.apiBaseUrl = apiBaseUrl;
     this.transport = options.transport ?? new BeatSaverTransport({ fetch: options.fetch, proxyUrl: options.proxyUrl, timeoutMs: options.timeoutMs, maxRetries: options.maxRetries, retryBaseMs: options.retryBaseMs });
     this.maxDownloadBytes = Number.isFinite(options.maxDownloadBytes) ? Math.max(1, Math.trunc(options.maxDownloadBytes ?? 0)) : 128 * 1024 * 1024;
@@ -36,11 +38,11 @@ export class AeroBeatSaverVendorService {
    */
   async searchMaps(query = {}, options = {}) {
     return this.run("search", async () => {
-      const page = Math.min(100_000, Math.max(0, Math.trunc(query.page ?? 0)));
+      const page = normalizePage(query.page);
+      const wanted = normalizeDifficultyName(query.difficulty);
       const url = new URL(`search/text/${page}`, this.apiBaseUrl);
       url.search = buildSearchParameters(query).toString();
       const result = normalizeMapCollection(await this.transport.getJson(url, { signal: options.signal }), "search");
-      const wanted = normalizeDifficultyName(query.difficulty);
       return wanted === "" ? result : Object.freeze({ ...result, maps: Object.freeze(result.maps.filter((map) => map.versions.some((version) => version.difficulties.some((difficulty) => difficulty.characteristic === "Standard" && difficulty.difficulty === wanted)))) });
     });
   }
@@ -174,9 +176,11 @@ export const beatSaverVendorCapabilities = Object.freeze({
   progress: true
 });
 
-/** @param {string} value @param {string} label @param {RegExp} pattern @returns {string} */
-function requireIdentifier(value, label, pattern) { const normalized = value.trim(); if (!pattern.test(normalized)) throw new BeatSaverVendorError("invalid_request", `Invalid BeatSaver ${label}`); return normalized; }
-/** @param {string | undefined} value @returns {string} */
-function normalizeDifficultyName(value) { if (value === undefined || value.trim() === "") return ""; const compact = value.toLowerCase().replaceAll(/[^a-z]/gu, ""); const names = /** @type {Readonly<Record<string, string>>} */ ({ easy: "Easy", normal: "Normal", hard: "Hard", expert: "Expert", expertplus: "ExpertPlus" }); const normalized = names[compact]; if (normalized === undefined) throw new BeatSaverVendorError("invalid_request", "Unsupported BeatSaver difficulty filter"); return normalized; }
+/** @param {unknown} value @param {string} label @param {RegExp} pattern @returns {string} */
+function requireIdentifier(value, label, pattern) { if (typeof value !== "string") throw new BeatSaverVendorError("invalid_request", `Invalid BeatSaver ${label}`); const normalized = value.trim(); if (!pattern.test(normalized)) throw new BeatSaverVendorError("invalid_request", `Invalid BeatSaver ${label}`); return normalized; }
+/** @param {unknown} value @returns {string} */
+function normalizeDifficultyName(value) { if (value === undefined) return ""; if (typeof value !== "string") throw new BeatSaverVendorError("invalid_request", "BeatSaver difficulty filter must be a string"); if (value.trim() === "") return ""; const compact = value.toLowerCase().replaceAll(/[^a-z]/gu, ""); const names = /** @type {Readonly<Record<string, string>>} */ ({ easy: "Easy", normal: "Normal", hard: "Hard", expert: "Expert", expertplus: "ExpertPlus" }); const normalized = names[compact]; if (normalized === undefined) throw new BeatSaverVendorError("invalid_request", "Unsupported BeatSaver difficulty filter"); return normalized; }
+/** @param {unknown} value @returns {number} */
+function normalizePage(value) { if (value === undefined) return 0; if (typeof value !== "number" || !Number.isFinite(value)) throw new BeatSaverVendorError("invalid_request", "BeatSaver search page must be finite"); return Math.min(100_000, Math.max(0, Math.trunc(value))); }
 /** @param {Blob | ArrayBuffer | Uint8Array} input @returns {Promise<Uint8Array>} */
 async function inputBytes(input) { if (input instanceof Uint8Array) return input.slice(); if (input instanceof ArrayBuffer) return new Uint8Array(input.slice(0)); if (input instanceof Blob) return new Uint8Array(await input.arrayBuffer()); throw new BeatSaverVendorError("invalid_request", "Local archive must be Blob, ArrayBuffer, or Uint8Array"); }

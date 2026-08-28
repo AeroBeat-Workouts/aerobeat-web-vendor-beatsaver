@@ -12,7 +12,7 @@ Direct credential-free CORS is the default transport. Fetch and proxy-URL resolu
 
 ## Archive decision
 
-`fflate` 0.8.2 is the only runtime dependency. Package-owned code parses and validates the ZIP central directory before decompression. It enforces HTTPS acquisition, archive/entry/expanded/ratio limits, safe normalized paths, no duplicate case-insensitive paths, no symlinks/encryption/ZIP64/multi-disk input, and supported metadata/difficulty references.
+`fflate` 0.8.2 is the only runtime dependency. Package-owned code validates ZIP central records, matching local headers, non-overlapping compressed ranges, optional data descriptors, Unicode-normalized paths, declared limits, actual expanded lengths, and CRC-32 before exposing entries. DEFLATE runs one entry at a time through bounded streaming input rather than whole-archive allocation. Acquisition enforces credential-free HTTPS (with an explicit loopback-only proxy development seam), including the final redirected URL.
 
 The downstream contract is a closure-backed source bundle with immutable metadata and defensive per-entry reads. It does not expose the original archive, `Response`, provider DTO, or `fflate` object.
 

@@ -88,6 +88,7 @@ export function normalizeMapCollection(payload, source) {
  * @returns {BeatSaverVersion} Selected version.
  */
 export function selectVersion(map, identifier) {
+  if (identifier !== undefined && typeof identifier !== "string") invalidRequest("BeatSaver version identifier must be a string");
   const normalized = (identifier ?? "").trim().toLowerCase();
   const selected = normalized.length === 0
     ? map.versions[0]
@@ -106,12 +107,18 @@ export function selectVersion(map, identifier) {
  */
 export function buildSearchParameters(query) {
   const parameters = new URLSearchParams();
-  parameters.set("q", (query.text ?? "").trim().slice(0, 256));
-  parameters.set("pageSize", String(clampInteger(query.pageSize, 20, 1, 100)));
-  if (query.order !== undefined && SEARCH_ORDERS.has(query.order)) parameters.set("order", query.order);
+  const text = optionalQueryString(query.text, "search text");
+  parameters.set("q", text.slice(0, 256));
+  parameters.set("pageSize", String(queryInteger(query.pageSize, 20, 1, 100, "search page size")));
+  if (query.order !== undefined) {
+    if (typeof query.order !== "string") invalidRequest("Search order must be a string");
+    if (SEARCH_ORDERS.has(query.order)) parameters.set("order", query.order);
+  }
+  if (query.automapper !== undefined && typeof query.automapper !== "boolean") invalidRequest("Search automapper must be boolean");
   if (typeof query.automapper === "boolean") parameters.set("automapper", String(query.automapper));
   if (query.tags !== undefined) {
-    const tags = query.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 16);
+    if (!Array.isArray(query.tags) || query.tags.some((tag) => typeof tag !== "string")) invalidRequest("Search tags must be an array of strings");
+    const tags = query.tags.map((tag) => tag.trim().slice(0, 64)).filter(Boolean).slice(0, 16);
     if (tags.length > 0) parameters.set("tags", tags.join(","));
   }
   return parameters;
@@ -123,11 +130,15 @@ export function buildSearchParameters(query) {
  */
 export function buildLatestParameters(options) {
   const parameters = new URLSearchParams();
-  parameters.set("pageSize", String(clampInteger(options.pageSize, 20, 1, 100)));
-  if (options.before?.trim()) parameters.set("before", options.before.trim());
-  if (options.after?.trim()) parameters.set("after", options.after.trim());
-  const sort = options.sort?.trim().toUpperCase();
+  parameters.set("pageSize", String(queryInteger(options.pageSize, 20, 1, 100, "latest page size")));
+  const before = optionalQueryString(options.before, "latest before");
+  const after = optionalQueryString(options.after, "latest after");
+  if (before) parameters.set("before", before.slice(0, 128));
+  if (after) parameters.set("after", after.slice(0, 128));
+  const sortValue = optionalQueryString(options.sort, "latest sort");
+  const sort = sortValue === "" ? undefined : sortValue.toUpperCase();
   if (sort !== undefined && LATEST_SORTS.has(sort)) parameters.set("sort", sort);
+  if (options.automapper !== undefined && typeof options.automapper !== "boolean") invalidRequest("Latest automapper must be boolean");
   if (typeof options.automapper === "boolean") parameters.set("automapper", String(options.automapper));
   return parameters;
 }
@@ -185,17 +196,15 @@ function normalizeDifficulty(payload, context) {
 
 /** @param {unknown} value @param {string} context @returns {Record<string, unknown>} */
 export function requireRecord(value, context) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new BeatSaverVendorError("provider_payload", `Expected object at ${context}`);
+  if (!isPlainRecord(value)) {
+    throw new BeatSaverVendorError("provider_payload", `Expected plain object at ${context}`);
   }
   return /** @type {Record<string, unknown>} */ (value);
 }
 
 /** @param {unknown} value @returns {Record<string, unknown>} */
 export function optionalRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? /** @type {Record<string, unknown>} */ (value)
-    : {};
+  return isPlainRecord(value) ? /** @type {Record<string, unknown>} */ (value) : {};
 }
 
 /** @param {unknown} value @returns {readonly unknown[]} */
@@ -219,12 +228,20 @@ export function finiteNumber(value) { return typeof value === "number" && Number
 export function nonNegativeInteger(value) { return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0; }
 /** @param {unknown} value @returns {boolean} */
 export function optionalBoolean(value) { return value === true; }
-/** @param {number | undefined} value @param {number} fallback @param {number} minimum @param {number} maximum @returns {number} */
-function clampInteger(value, fallback, minimum, maximum) { return Math.min(maximum, Math.max(minimum, Number.isFinite(value) ? Math.trunc(value ?? fallback) : fallback)); }
+/** @param {unknown} value @returns {boolean} */
+function isPlainRecord(value) { if (typeof value !== "object" || value === null || Array.isArray(value)) return false; const prototype = Object.getPrototypeOf(value); return prototype === Object.prototype || prototype === null; }
+/** @param {unknown} value @param {string} label @returns {string} */
+function optionalQueryString(value, label) { if (value === undefined) return ""; if (typeof value !== "string") invalidRequest(`${label} must be a string`); return value.trim(); }
+/** @param {unknown} value @param {number} fallback @param {number} minimum @param {number} maximum @param {string} label @returns {number} */
+function queryInteger(value, fallback, minimum, maximum, label) { if (value === undefined) return fallback; if (typeof value !== "number" || !Number.isFinite(value)) invalidRequest(`${label} must be finite`); return Math.min(maximum, Math.max(minimum, Math.trunc(value))); }
+/** @param {string} message @returns {never} */
+function invalidRequest(message) { throw new BeatSaverVendorError("invalid_request", message); }
 /** @param {unknown} value @param {string} context @returns {string} */
 function requireHttpsUrl(value, context) {
-  const url = new URL(requireNonEmptyString(value, context));
-  if (url.protocol !== "https:") throw new BeatSaverVendorError("provider_payload", `Expected HTTPS URL at ${context}`);
+  let url;
+  try { url = new URL(requireNonEmptyString(value, context)); }
+  catch (error) { if (error instanceof BeatSaverVendorError) throw error; throw new BeatSaverVendorError("provider_payload", `Expected valid URL at ${context}`, { cause: error }); }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "") throw new BeatSaverVendorError("provider_payload", `Expected credential-free HTTPS URL at ${context}`);
   return url.href;
 }
 /** @param {unknown} value @param {string} context @returns {string} */
