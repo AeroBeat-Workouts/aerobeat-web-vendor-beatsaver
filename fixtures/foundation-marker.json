@@ -1,0 +1,7 @@
+{
+  "schemaId": "aerobeat.web-vendor-beatsaver.foundation-fixture.v1",
+  "providerId": "beatsaver",
+  "mapKey": "synthetic-fixture-key",
+  "versionHash": "0000000000000000000000000000000000000000",
+  "contentScope": "metadata-only-synthetic"
+}
