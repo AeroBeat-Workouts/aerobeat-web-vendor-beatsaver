@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "aerobeat_web_vendor_beatsaver",
+  "project_id": "ed9f819a-0a35-4c3b-acbc-3ac1b48e2fd0"
+}
