@@ -34,12 +34,20 @@ export function createSyntheticBeatSaverZip(major = 2) {
     _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: [{ _difficulty: "Expert", _difficultyRank: 7, _beatmapFilename: "Maps/Expert.dat", _noteJumpMovementSpeed: 14, _noteJumpStartBeatOffset: 0 }] }]
   };
   return zipSync({
-    "Info.dat": strToU8(JSON.stringify(info)),
-    "Audio/Song.egg": Uint8Array.of(79, 103, 103, 83),
-    "Cover.PNG": Uint8Array.of(137, 80, 78, 71),
-    "Maps/Expert.dat": strToU8(JSON.stringify(difficulty))
-  }, { level: 6 });
+    "Info.dat": syntheticZipEntry(strToU8(JSON.stringify(info))),
+    "Audio/Song.egg": syntheticZipEntry(Uint8Array.of(79, 103, 103, 83)),
+    "Cover.PNG": syntheticZipEntry(Uint8Array.of(137, 80, 78, 71)),
+    "Maps/Expert.dat": syntheticZipEntry(strToU8(JSON.stringify(difficulty)))
+  }, { level: 6, mtime: fixedSyntheticZipMtime(), os: 0, attrs: 0x20 });
 }
+
+/** @param {Uint8Array} bytes @returns {[Uint8Array, import("fflate").ZipOptions]} */
+function syntheticZipEntry(bytes) {
+  return [bytes, { level: 6, mtime: fixedSyntheticZipMtime(), os: 0, attrs: 0x20 }];
+}
+
+/** @returns {Date} Legal DOS-compatible local date with timezone-stable fields. */
+function fixedSyntheticZipMtime() { return new Date(2000, 0, 1, 0, 0, 0, 0); }
 
 /** @param {2 | 3 | 4} major @returns {string} Stable synthetic fixture ID. */
 export function syntheticBeatSaverFixtureId(major) { return `aerobeat-vendor-source-v${major}-standard-expert-v1`; }

@@ -12,7 +12,6 @@ import {
 } from "../src/index.js";
 import { createSyntheticBeatSaverZip, createSyntheticMapPayload, syntheticBeatSaverFixtureId } from "./fixture-helpers.js";
 
-const convergenceEvidence = await validateSourceConvergence();
 const archive = createSyntheticBeatSaverZip(2);
 const archiveSha1 = await sha1Hex(archive);
 const hash = await computeBeatSaverMapHash(await inspectBeatSaverArchive(archive));
@@ -134,18 +133,59 @@ setTimeout(() => retryAbort.abort(), 10);
 await assert.rejects(() => cappedRetryTransport.getJson(new URL("https://api.example.invalid/map"), { signal: retryAbort.signal }), hasCode("aborted"));
 assert.equal(cappedRetryTransport.snapshotTelemetry().retries, 1);
 
+/** @type {Readonly<Record<2 | 3 | 4, Readonly<{archiveSha1: string, entries: Readonly<Record<string, string>>}>>>} */
+const lockedFixtureHashes = Object.freeze({
+  2: Object.freeze({
+    archiveSha1: "c3f76b20a55d917595c4b741519fb8e274001f83",
+    entries: Object.freeze({
+      "Info.dat": "af1c856675a67b2541d2e20315bbceb155f724e859402e1c75ec00214f1c9c64",
+      "Audio/Song.egg": "68d9ed2adb24458ff173db06b41b9d1b6e228764c457030d63fad11b02bfae1e",
+      "Cover.PNG": "0f4636c78f65d3639ece5a064b5ae753e3408614a14fb18ab4d7540d2c248543",
+      "Maps/Expert.dat": "bc76dba91a1f6392db878a0e3aa9d8e51cb8e152772af7288a48603241236a42"
+    })
+  }),
+  3: Object.freeze({
+    archiveSha1: "1b8f83e061f3c7138c25a4bc5733a845cad6884d",
+    entries: Object.freeze({
+      "Info.dat": "56c846c06f9989bc0a29e21173e8897334efc56a766594c0c4587a04625ae9c1",
+      "Audio/Song.egg": "68d9ed2adb24458ff173db06b41b9d1b6e228764c457030d63fad11b02bfae1e",
+      "Cover.PNG": "0f4636c78f65d3639ece5a064b5ae753e3408614a14fb18ab4d7540d2c248543",
+      "Maps/Expert.dat": "fe7429c7d72f85a1c92151a845925c3dc0560ea44d5f266fedfaae8b74547758"
+    })
+  }),
+  4: Object.freeze({
+    archiveSha1: "90a80f500bc63892657d3dd0609b05f3148026df",
+    entries: Object.freeze({
+      "Info.dat": "2fef6cf60c925e3264ef795d81f36b97e1668a75038b48212bf5104cb69ccff0",
+      "Audio/Song.egg": "68d9ed2adb24458ff173db06b41b9d1b6e228764c457030d63fad11b02bfae1e",
+      "Cover.PNG": "0f4636c78f65d3639ece5a064b5ae753e3408614a14fb18ab4d7540d2c248543",
+      "Maps/Expert.dat": "6f4580181ca3942ed495cf2c96adc8fc608250b4b6626dd4b69ea2f063529609"
+    })
+  })
+});
+
+const convergenceEvidence = await validateSourceConvergence();
 console.log(`BeatSaver vendor service validation passed. Convergence: ${convergenceEvidence.join(", ")}`);
 
 /** @returns {Promise<readonly string[]>} */
 async function validateSourceConvergence() {
+  const majors = /** @type {const} */ ([2, 3, 4]);
+  const firstArchives = new Map(majors.map((major) => [major, createSyntheticBeatSaverZip(major)]));
+  await new Promise((resolve) => setTimeout(resolve, 2_200));
+  const delayedArchives = new Map(majors.map((major) => [major, createSyntheticBeatSaverZip(major)]));
   /** @type {string[]} */
   const evidence = [];
-  for (const major of /** @type {const} */ ([2, 3, 4])) {
+  for (const major of majors) {
     const fixtureId = syntheticBeatSaverFixtureId(major);
-    const fixtureArchive = createSyntheticBeatSaverZip(major);
+    const fixtureArchive = firstArchives.get(major);
+    const delayedArchive = delayedArchives.get(major);
+    assert.ok(fixtureArchive && delayedArchive);
+    assert.deepEqual(fixtureArchive, delayedArchive, `${fixtureId} must be byte-identical across delayed independent generation`);
     const inspected = await inspectBeatSaverArchive(fixtureArchive);
     const sourceHash = await computeBeatSaverMapHash(inspected);
     const archiveHash = await sha1Hex(fixtureArchive);
+    assert.equal(archiveHash, lockedFixtureHashes[major].archiveSha1, `${fixtureId} archive SHA-1 must remain locked`);
+    assert.equal(await sha1Hex(delayedArchive), archiveHash);
     const mapId = `F${major}A9C`;
     const downloadUrl = `https://cdn.example.invalid/${fixtureId}.zip`;
     const providerPayload = { ...createSyntheticMapPayload(sourceHash, downloadUrl, mapId), rawProviderSecret: `forbidden-${major}` };
@@ -176,7 +216,9 @@ async function validateSourceConvergence() {
       const onlineBytes = online.source.readEntry(path);
       const localBytes = localFixture.source.readEntry(path);
       assert.deepEqual(onlineBytes, localBytes, `${fixtureId} ${path} bytes must converge`);
-      assert.equal(sha256Hex(onlineBytes), sha256Hex(localBytes));
+      const entryHash = sha256Hex(onlineBytes);
+      assert.equal(entryHash, sha256Hex(localBytes));
+      assert.equal(entryHash, lockedFixtureHashes[major].entries[path], `${fixtureId} ${path} SHA-256 must remain locked`);
       const entry = online.source.manifest.entries.find((candidate) => candidate.path === path);
       assert.equal(entry?.expandedBytes, onlineBytes.byteLength, `${fixtureId} ${path} length must match manifest`);
     }
