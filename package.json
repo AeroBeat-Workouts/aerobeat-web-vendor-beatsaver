@@ -22,6 +22,7 @@
     "check:contract": "node scripts/validate-vendor-contract.js",
     "test": "npm run check && npm run test:unit",
     "test:unit": "node scripts/validate-vendor-service.js && node scripts/validate-archive-security.js",
+    "test:live-v4-hash": "node scripts/validate-live-v4-provider-hash.js",
     "test:browser": "node scripts/validate-browser-smoke.js",
     "demo": "npm --prefix .testbed run demo",
     "testbed:serve": "npm --prefix .testbed run serve"

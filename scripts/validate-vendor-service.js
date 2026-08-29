@@ -10,7 +10,14 @@ import {
   normalizeMap,
   sha1Hex
 } from "../src/index.js";
-import { createSyntheticBeatSaverZip, createSyntheticMapPayload, syntheticBeatSaverFixtureId } from "./fixture-helpers.js";
+import {
+  createSyntheticBeatSaverZip,
+  createSyntheticMapPayload,
+  createV4ProviderHashGoldenZip,
+  syntheticBeatSaverFixtureId,
+  v4ProviderHashGoldenExpected,
+  v4ProviderHashGoldenInfo
+} from "./fixture-helpers.js";
 
 const archive = createSyntheticBeatSaverZip(2);
 const archiveSha1 = await sha1Hex(archive);
@@ -58,6 +65,29 @@ assert.deepEqual([...acquired.source.readEntry("audio/song.EGG")], [79, 103, 103
 assert.ok(progress.at(-1) === archive.byteLength);
 const mismatchedMap = normalizeMap(createSyntheticMapPayload("0000000000000000000000000000000000000000"));
 await assert.rejects(() => service.acquireVersion(mismatchedMap, undefined), (error) => error instanceof Error && "code" in error && error.code === "integrity");
+
+const v4GoldenArchive = createV4ProviderHashGoldenZip();
+const v4GoldenSource = await inspectBeatSaverArchive(v4GoldenArchive);
+assert.equal(new TextDecoder().decode(v4GoldenSource.readEntry("Info.dat")), v4ProviderHashGoldenInfo, "provider hash must begin with exact raw downloaded Info.dat bytes");
+assert.deepEqual(v4GoldenSource.manifest.hashInputPaths, [
+  "AudioData.dat",
+  "EasyLightshow.dat",
+  "SharedLightshow.dat",
+  "ExpertPlusStandard.dat",
+  "SharedLightshow.dat"
+], "v4 manifest must expose ordered duplicate-preserving provider hash inputs");
+assert.equal(v4GoldenSource.manifest.hashInputPaths.filter((path) => path === "SharedLightshow.dat").length, 2);
+assert.equal(await computeBeatSaverMapHash(v4GoldenSource), v4ProviderHashGoldenExpected, "v4 provider golden must match independently hard-coded SHA-1");
+const v4GoldenDownloadUrl = "https://cdn.example.invalid/v4-provider-hash-golden.zip";
+const v4GoldenMap = normalizeMap(createSyntheticMapPayload(v4ProviderHashGoldenExpected, v4GoldenDownloadUrl, "V4GOLD"));
+const v4GoldenService = createAeroBeatSaverVendorService({ fetch: async () => new Response(v4GoldenArchive) });
+assert.equal((await v4GoldenService.acquireVersion(v4GoldenMap, v4ProviderHashGoldenExpected)).sourceHash, v4ProviderHashGoldenExpected);
+const tamperedV4Service = createAeroBeatSaverVendorService({ fetch: async () => new Response(createV4ProviderHashGoldenZip({ tamperAudioData: true })) });
+await assert.rejects(() => tamperedV4Service.acquireVersion(v4GoldenMap, v4ProviderHashGoldenExpected), (error) => {
+  if (!(error instanceof Error) || !("code" in error) || error.code !== "integrity" || !("details" in error)) return false;
+  const details = /** @type {{expectedHash?: unknown, actualHash?: unknown}} */ (error.details);
+  return details.expectedHash === v4ProviderHashGoldenExpected && typeof details.actualHash === "string" && details.actualHash !== v4ProviderHashGoldenExpected;
+}, "tampering any hashed v4 input must fail strict expectedHash comparison");
 
 const local = await service.importLocalArchive(new Blob([archive]));
 assert.equal(local.sourceHash, hash);
@@ -133,9 +163,10 @@ setTimeout(() => retryAbort.abort(), 10);
 await assert.rejects(() => cappedRetryTransport.getJson(new URL("https://api.example.invalid/map"), { signal: retryAbort.signal }), hasCode("aborted"));
 assert.equal(cappedRetryTransport.snapshotTelemetry().retries, 1);
 
-/** @type {Readonly<Record<2 | 3 | 4, Readonly<{archiveSha1: string, entries: Readonly<Record<string, string>>}>>>} */
+/** @type {Readonly<Record<2 | 3 | 4, Readonly<{sourceHash: string, archiveSha1: string, entries: Readonly<Record<string, string>>}>>>} */
 const lockedFixtureHashes = Object.freeze({
   2: Object.freeze({
+    sourceHash: "f8ed950c666baf9148a18e5f3b9731b3f2f23cb0",
     archiveSha1: "c3f76b20a55d917595c4b741519fb8e274001f83",
     entries: Object.freeze({
       "Info.dat": "af1c856675a67b2541d2e20315bbceb155f724e859402e1c75ec00214f1c9c64",
@@ -145,6 +176,7 @@ const lockedFixtureHashes = Object.freeze({
     })
   }),
   3: Object.freeze({
+    sourceHash: "f40cee1a11222c29ccdabb3193c83b9d25a837a4",
     archiveSha1: "1b8f83e061f3c7138c25a4bc5733a845cad6884d",
     entries: Object.freeze({
       "Info.dat": "56c846c06f9989bc0a29e21173e8897334efc56a766594c0c4587a04625ae9c1",
@@ -154,12 +186,14 @@ const lockedFixtureHashes = Object.freeze({
     })
   }),
   4: Object.freeze({
-    archiveSha1: "90a80f500bc63892657d3dd0609b05f3148026df",
+    sourceHash: "40035da7af6e521f3a02c54dcdfc8eb4366c6412",
+    archiveSha1: "7c586a16f10500d3dda5c84a8dae7dbe46a95bb5",
     entries: Object.freeze({
-      "Info.dat": "2fef6cf60c925e3264ef795d81f36b97e1668a75038b48212bf5104cb69ccff0",
+      "Info.dat": "299ff0523f4f19d811c8138630cf2c0465df016589973989fb2341e7e2ee0af1",
       "Audio/Song.egg": "68d9ed2adb24458ff173db06b41b9d1b6e228764c457030d63fad11b02bfae1e",
       "Cover.PNG": "0f4636c78f65d3639ece5a064b5ae753e3408614a14fb18ab4d7540d2c248543",
-      "Maps/Expert.dat": "6f4580181ca3942ed495cf2c96adc8fc608250b4b6626dd4b69ea2f063529609"
+      "Maps/Expert.dat": "6f4580181ca3942ed495cf2c96adc8fc608250b4b6626dd4b69ea2f063529609",
+      "Audio/AudioData.dat": "b09decf9a4246f653478d739f6a64cbcdbbc63d5bb9460c7f5b26e28142a5199"
     })
   })
 });
@@ -184,6 +218,7 @@ async function validateSourceConvergence() {
     const inspected = await inspectBeatSaverArchive(fixtureArchive);
     const sourceHash = await computeBeatSaverMapHash(inspected);
     const archiveHash = await sha1Hex(fixtureArchive);
+    assert.equal(sourceHash, lockedFixtureHashes[major].sourceHash, `${fixtureId} provider source SHA-1 must remain locked`);
     assert.equal(archiveHash, lockedFixtureHashes[major].archiveSha1, `${fixtureId} archive SHA-1 must remain locked`);
     assert.equal(await sha1Hex(delayedArchive), archiveHash);
     const mapId = `F${major}A9C`;
@@ -211,7 +246,10 @@ async function validateSourceConvergence() {
     const onlinePaths = online.source.listEntryPaths();
     const localPaths = localFixture.source.listEntryPaths();
     assert.deepEqual(onlinePaths, localPaths);
-    assert.deepEqual(onlinePaths, ["Info.dat", "Audio/Song.egg", "Cover.PNG", "Maps/Expert.dat"], `${fixtureId} paths must be deterministic`);
+    const expectedPaths = major === 4
+      ? ["Info.dat", "Audio/Song.egg", "Cover.PNG", "Maps/Expert.dat", "Audio/AudioData.dat"]
+      : ["Info.dat", "Audio/Song.egg", "Cover.PNG", "Maps/Expert.dat"];
+    assert.deepEqual(onlinePaths, expectedPaths, `${fixtureId} paths must be deterministic`);
     for (const path of onlinePaths) {
       const onlineBytes = online.source.readEntry(path);
       const localBytes = localFixture.source.readEntry(path);

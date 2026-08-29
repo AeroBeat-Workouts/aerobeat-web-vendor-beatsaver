@@ -128,6 +128,14 @@ Model provider hash inputs as an ordered sequence that may contain duplicates ra
 
 The source manifest may need a clearer field name than `hashInputPaths` or explicit documentation that entries are ordered and duplicates are significant.
 
+## Implemented Verification
+
+The repair keeps `hashInputPaths` for manifest compatibility and now defines it explicitly as an ordered, duplicate-preserving sequence rather than a set. v4 prepends `audio.audioDataFilename` and retains every beatmap/lightshow occurrence; the legacy v2/v3 branch preserves its previous sequence and deduplication behavior. Archive validation, CRC checks, limits, and the strict `expectedHash === sourceHash` provider comparison are unchanged.
+
+Offline coverage uses an independently hard-coded v4 golden SHA-1 `96e68173fffd6454bfb38740acaf58653da11320` with raw Info bytes, AudioData, two metadata-ordered difficulties, and one repeated shared lightshow. It also proves AudioData tampering fails strict provider integrity and locks the unchanged v2/v3 source hashes `f8ed950c666baf9148a18e5f3b9731b3f2f23cb0` and `f40cee1a11222c29ccdabb3193c83b9d25a837a4`.
+
+The optional network script `npm run test:live-v4-hash` fetched current map `53F26` and reproduced `addd9d6f8e7340ad6f5633947136d8475a7a99b5` exactly. Normal validation does not invoke that script or depend on network access.
+
 ## Debugging Record
 
 ```text

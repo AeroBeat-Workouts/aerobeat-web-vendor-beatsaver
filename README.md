@@ -32,7 +32,7 @@ The service exposes `searchMaps`, `listLatestMaps`, `getMapById`, `getMapByHash`
 
 ## Provider-Neutral Source Bundle
 
-Successful acquisition returns immutable normalized map/version records, the verified BeatSaver/SongCore source hash, an informational raw-archive SHA-1, and a source bundle. The provider hash is computed over the exact Info.dat bytes followed by every referenced beatmap (and v4 lightshow) file in metadata order; it is intentionally not the raw ZIP hash. The bundle exposes:
+Successful acquisition returns immutable normalized map/version records, the verified BeatSaver/SongCore source hash, an informational raw-archive SHA-1, and a source bundle. The provider hash is intentionally not the raw ZIP hash. Its stream begins with the exact raw downloaded `Info.dat` bytes. For v4, those bytes are followed by `audio.audioDataFilename`, then each difficulty's `beatmapDataFilename` and `lightshowDataFilename` bytes in metadata order; repeated shared references are hashed repeatedly and must not be deduplicated. v2/v3 retain their legacy metadata-ordered beatmap sequence. The manifest's `hashInputPaths` is therefore an ordered, duplicate-preserving provider-hash sequence rather than a set. The bundle exposes:
 
 - a normalized `aerobeat.beatsaver-source-manifest.v1` manifest;
 - `listEntryPaths()`;
@@ -69,7 +69,9 @@ npm run test:browser
 npm pack --dry-run
 ```
 
-Tests generate deterministic synthetic ZIPs in memory with matching v2/v3/v4 Info and difficulty documents. Mocked online API/CDN acquisition and local archive import must converge on the same provider-neutral manifest, source/version hash, canonical path list, entry lengths and entry byte hashes for every major. The malicious archive table exercises only the public inspector and locks its stable error code. Browser smoke performs no external request, and no third-party map/audio bytes are committed.
+Tests generate deterministic synthetic ZIPs in memory with matching v2/v3/v4 Info and difficulty documents. Mocked online API/CDN acquisition and local archive import must converge on the same provider-neutral manifest, source/version hash, canonical path list, entry lengths and entry byte hashes for every major. An independently hard-coded v4 golden locks raw Info, AudioData, metadata ordering, repeated shared-lightshow hashing, strict tamper rejection, and unchanged v2/v3 provider hashes. The malicious archive table exercises only the public inspector and locks its stable error code. Browser smoke performs no external request, and no third-party map/audio bytes are committed.
+
+The normal gates are network-independent. When network access is intentionally available, `npm run test:live-v4-hash` fetches BeatSaver map `53F26` and proves its exact provider hash `addd9d6f8e7340ad6f5633947136d8475a7a99b5`; this optional live proof is not invoked by `npm test`.
 
 ## Content And Legal Boundary
 

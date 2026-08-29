@@ -8,6 +8,8 @@ import { finiteNumber, optionalArray, optionalRecord, optionalString, requireRec
 /** @typedef {Readonly<{path: string, basename: string, extension: string, directory: boolean, compressedBytes: number, expandedBytes: number, compressionMethod: number, infoDat: boolean, audioCandidate: boolean, coverCandidate: boolean, difficultyCandidate: boolean}>} BeatSaverArchiveEntry */
 /** @typedef {Readonly<{characteristic: "Standard", difficulty: string, difficultyRank: number, path: string, noteJumpMovementSpeed: number, noteJumpStartBeatOffset: number}>} BeatSaverSourceDifficulty */
 /** @typedef {Readonly<{schemaId: "aerobeat.beatsaver-source-manifest.v1", sourceFormatMajor: 2 | 3 | 4, infoPath: string, hashInputPaths: readonly string[], songName: string, songSubName: string, songAuthorName: string, levelAuthorName: string, audioPath: string, coverPath: string, bpm: number, previewStartSeconds: number, previewDurationSeconds: number, difficulties: readonly BeatSaverSourceDifficulty[], entries: readonly BeatSaverArchiveEntry[], archiveBytes: number, expandedBytes: number}>} BeatSaverSourceManifest */
+// `hashInputPaths` is an ordered provider-hash sequence, not a set. Duplicate
+// entries are significant for v4 maps that share one lightshow across difficulties.
 /** @typedef {Readonly<{manifest: BeatSaverSourceManifest, listEntryPaths: () => readonly string[], readEntry: (path: string) => Uint8Array}>} BeatSaverSourceBundle */
 
 /** @type {BeatSaverArchiveLimits} */
@@ -75,8 +77,10 @@ export async function sha1Hex(bytes) {
 }
 
 /**
- * Compute the BeatSaver/SongCore map hash: Info.dat bytes followed by every
- * referenced beatmap (and v4 lightshow) file in metadata order.
+ * Compute the BeatSaver/SongCore map hash. The stream starts with the raw
+ * downloaded Info.dat bytes. For v4 it then contains audioDataFilename bytes,
+ * followed by each difficulty's beatmap and lightshow bytes in metadata order,
+ * including repeated shared references. Legacy v2/v3 sequencing is unchanged.
  *
  * @param {BeatSaverSourceBundle} source Safe source bundle.
  * @returns {Promise<string>} Lowercase provider map hash.
@@ -213,15 +217,28 @@ function buildSourceManifest(info, infoPath, entries, archiveBytes) {
   const difficultyPayloads = collectDifficultyPayloads(info);
   /** @type {string[]} */
   const hashInputPaths = [];
-  const seenHashPaths = new Set();
-  for (const payload of difficultyPayloads) {
-    const beatmapPath = optionalString(payload.beatmapDataFilename) || optionalString(payload.beatmapFilename) || optionalString(payload._beatmapFilename);
-    const lightshowPath = optionalString(payload.lightshowDataFilename);
-    for (const candidate of [beatmapPath, lightshowPath]) {
-      if (!candidate) continue;
-      const resolved = resolveArchivePath(candidate, entries, "hash input");
-      const key = pathKey(resolved);
-      if (!seenHashPaths.has(key)) { hashInputPaths.push(resolved); seenHashPaths.add(key); }
+  if (sourceFormatMajor === 4) {
+    const audioDataPath = optionalString(audio.audioDataFilename);
+    if (!audioDataPath) throw new BeatSaverVendorError("provider_payload", "v4 Info.dat does not reference audio data");
+    hashInputPaths.push(resolveArchivePath(audioDataPath, entries, "audio data hash input"));
+    for (const payload of difficultyPayloads) {
+      const beatmapPath = optionalString(payload.beatmapDataFilename);
+      const lightshowPath = optionalString(payload.lightshowDataFilename);
+      for (const candidate of [beatmapPath, lightshowPath]) {
+        if (candidate) hashInputPaths.push(resolveArchivePath(candidate, entries, "hash input"));
+      }
+    }
+  } else {
+    const seenHashPaths = new Set();
+    for (const payload of difficultyPayloads) {
+      const beatmapPath = optionalString(payload.beatmapDataFilename) || optionalString(payload.beatmapFilename) || optionalString(payload._beatmapFilename);
+      const lightshowPath = optionalString(payload.lightshowDataFilename);
+      for (const candidate of [beatmapPath, lightshowPath]) {
+        if (!candidate) continue;
+        const resolved = resolveArchivePath(candidate, entries, "hash input");
+        const key = pathKey(resolved);
+        if (!seenHashPaths.has(key)) { hashInputPaths.push(resolved); seenHashPaths.add(key); }
+      }
     }
   }
   /** @type {BeatSaverSourceDifficulty[]} */
