@@ -69,7 +69,7 @@ npm run test:browser
 npm pack --dry-run
 ```
 
-Tests generate metadata-only ZIPs in memory for v2/v3/v4 and malicious cases. Browser smoke performs no external request and commits no map/audio data.
+Tests generate deterministic synthetic ZIPs in memory with matching v2/v3/v4 Info and difficulty documents. Mocked online API/CDN acquisition and local archive import must converge on the same provider-neutral manifest, source/version hash, canonical path list, entry lengths and entry byte hashes for every major. The malicious archive table exercises only the public inspector and locks its stable error code. Browser smoke performs no external request, and no third-party map/audio bytes are committed.
 
 ## Content And Legal Boundary
 

@@ -1,6 +1,7 @@
 // @ts-check
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   BeatSaverTransport,
   computeBeatSaverMapHash,
@@ -9,8 +10,9 @@ import {
   normalizeMap,
   sha1Hex
 } from "../src/index.js";
-import { createSyntheticBeatSaverZip, createSyntheticMapPayload } from "./fixture-helpers.js";
+import { createSyntheticBeatSaverZip, createSyntheticMapPayload, syntheticBeatSaverFixtureId } from "./fixture-helpers.js";
 
+const convergenceEvidence = await validateSourceConvergence();
 const archive = createSyntheticBeatSaverZip(2);
 const archiveSha1 = await sha1Hex(archive);
 const hash = await computeBeatSaverMapHash(await inspectBeatSaverArchive(archive));
@@ -132,7 +134,70 @@ setTimeout(() => retryAbort.abort(), 10);
 await assert.rejects(() => cappedRetryTransport.getJson(new URL("https://api.example.invalid/map"), { signal: retryAbort.signal }), hasCode("aborted"));
 assert.equal(cappedRetryTransport.snapshotTelemetry().retries, 1);
 
-console.log("BeatSaver vendor service validation passed.");
+console.log(`BeatSaver vendor service validation passed. Convergence: ${convergenceEvidence.join(", ")}`);
 
+/** @returns {Promise<readonly string[]>} */
+async function validateSourceConvergence() {
+  /** @type {string[]} */
+  const evidence = [];
+  for (const major of /** @type {const} */ ([2, 3, 4])) {
+    const fixtureId = syntheticBeatSaverFixtureId(major);
+    const fixtureArchive = createSyntheticBeatSaverZip(major);
+    const inspected = await inspectBeatSaverArchive(fixtureArchive);
+    const sourceHash = await computeBeatSaverMapHash(inspected);
+    const archiveHash = await sha1Hex(fixtureArchive);
+    const mapId = `F${major}A9C`;
+    const downloadUrl = `https://cdn.example.invalid/${fixtureId}.zip`;
+    const providerPayload = { ...createSyntheticMapPayload(sourceHash, downloadUrl, mapId), rawProviderSecret: `forbidden-${major}` };
+    /** @type {import("../src/transport.js").BeatSaverFetch} */
+    const fetchFixture = async (input, init) => {
+      init?.signal?.throwIfAborted();
+      const url = new URL(input.toString());
+      if (url.href === downloadUrl) return new Response(fixtureArchive, { headers: { "content-length": String(fixtureArchive.byteLength), "content-type": "application/zip" } });
+      if (url.pathname === `/maps/id/${mapId}`) return Response.json(providerPayload);
+      return new Response("not found", { status: 404 });
+    };
+    const fixtureService = createAeroBeatSaverVendorService({ fetch: fetchFixture, retryBaseMs: 1 });
+    const providerMap = await fixtureService.getMapById(mapId);
+    assert.equal(Object.hasOwn(providerMap, "rawProviderSecret"), false, `${fixtureId} must not expose provider DTO fields`);
+    const online = await fixtureService.acquireVersion(providerMap, sourceHash);
+    const localFixture = await fixtureService.importLocalArchive(fixtureArchive);
+    assert.equal(online.version.hash, sourceHash);
+    assert.equal(online.sourceHash, sourceHash);
+    assert.equal(localFixture.sourceHash, sourceHash);
+    assert.equal(online.archiveSha1, archiveHash);
+    assert.equal(localFixture.archiveSha1, archiveHash);
+    assert.deepEqual(online.source.manifest, localFixture.source.manifest);
+    const onlinePaths = online.source.listEntryPaths();
+    const localPaths = localFixture.source.listEntryPaths();
+    assert.deepEqual(onlinePaths, localPaths);
+    assert.deepEqual(onlinePaths, ["Info.dat", "Audio/Song.egg", "Cover.PNG", "Maps/Expert.dat"], `${fixtureId} paths must be deterministic`);
+    for (const path of onlinePaths) {
+      const onlineBytes = online.source.readEntry(path);
+      const localBytes = localFixture.source.readEntry(path);
+      assert.deepEqual(onlineBytes, localBytes, `${fixtureId} ${path} bytes must converge`);
+      assert.equal(sha256Hex(onlineBytes), sha256Hex(localBytes));
+      const entry = online.source.manifest.entries.find((candidate) => candidate.path === path);
+      assert.equal(entry?.expandedBytes, onlineBytes.byteLength, `${fixtureId} ${path} length must match manifest`);
+    }
+    const difficulty = JSON.parse(new TextDecoder().decode(online.source.readEntry("Maps/Expert.dat")));
+    assertMatchingDifficulty(major, difficulty);
+    evidence.push(`${fixtureId}=source:${sourceHash}/archive:${archiveHash}`);
+  }
+  return Object.freeze(evidence);
+}
+
+/** @param {2 | 3 | 4} major @param {unknown} value */
+function assertMatchingDifficulty(major, value) {
+  assert.ok(value && typeof value === "object" && !Array.isArray(value));
+  const record = /** @type {Record<string, unknown>} */ (value);
+  if (major === 2) { assert.equal(record._version, "2.6.0"); assert.ok(Array.isArray(record._notes)); return; }
+  assert.equal(record.version, major === 3 ? "3.3.0" : "4.0.0");
+  assert.ok(Array.isArray(record.colorNotes));
+  assert.equal(Object.hasOwn(record, "colorNotesData"), major === 4);
+}
+
+/** @param {Uint8Array} bytes @returns {string} */
+function sha256Hex(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
 /** @param {string} code Error code. @returns {(error: unknown) => boolean} Predicate. */
 function hasCode(code) { return (error) => error instanceof Error && "code" in error && error.code === code; }

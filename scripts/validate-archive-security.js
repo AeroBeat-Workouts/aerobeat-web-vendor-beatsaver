@@ -5,6 +5,9 @@ import { Zip, ZipDeflate, strToU8, zipSync } from "fflate";
 import { inspectBeatSaverArchive } from "../src/index.js";
 import { createSyntheticBeatSaverZip } from "./fixture-helpers.js";
 
+/** @type {string[]} */
+const archiveFailureCodes = [];
+
 for (const major of /** @type {const} */ ([2, 3, 4])) {
   const source = await inspectBeatSaverArchive(createSyntheticBeatSaverZip(major));
   assert.equal(source.manifest.sourceFormatMajor, major);
@@ -24,6 +27,8 @@ await expectArchiveFailure(validFixture({ "control\u0001.dat": strToU8("x") }), 
 await expectArchiveFailure(zipSync({ "Info.dat": strToU8("{}"), "huge.bin": new Uint8Array(200_000) }, { level: 9 }), /compression-ratio/u);
 await expectArchiveFailure(createSyntheticBeatSaverZip(2), /entry count/u, { maxEntries: 2 });
 await expectArchiveFailure(createSyntheticBeatSaverZip(2), /expanded byte limit/u, { maxEntryBytes: 8 });
+await expectArchiveFailure(createSyntheticBeatSaverZip(2), /Archive exceeds byte limit/u, { maxArchiveBytes: 8 });
+await expectArchiveFailure(createSyntheticBeatSaverZip(2), /total expanded byte limit/u, { maxExpandedBytes: 16 });
 
 const encrypted = patchFirstCentralEntry(createSyntheticBeatSaverZip(2), (view, offset) => view.setUint16(offset + 8, view.getUint16(offset + 8, true) | 1, true));
 await expectArchiveFailure(encrypted, /Encrypted ZIP entries/u);
@@ -100,8 +105,10 @@ firstRead[0] = (firstRead[0] ?? 0) ^ 0xff;
 assert.notDeepEqual(firstRead, defensive.readEntry("Maps/Expert.dat"));
 assert.equal(Object.hasOwn(defensive.manifest.entries[0] ?? {}, "crc32"), false);
 assert.equal(Object.hasOwn(defensive.manifest.entries[0] ?? {}, "localHeaderOffset"), false);
+assert.equal(archiveFailureCodes.length, 24, "every malicious archive table case must use the public inspector");
+assert.deepEqual([...new Set(archiveFailureCodes)], ["archive"], "malicious archive cases must retain one stable public error code");
 
-console.log("BeatSaver archive security validation passed.");
+console.log(`BeatSaver archive security validation passed (${archiveFailureCodes.length} public-inspector cases).`);
 
 /** @returns {Record<string, Uint8Array>} */
 function baseFixtureEntries() {
@@ -160,7 +167,11 @@ function concatenate(chunks) { const length = chunks.reduce((sum, chunk) => sum 
  * @returns {Promise<void>}
  */
 async function expectArchiveFailure(bytes, message, limits) {
-  await assert.rejects(() => inspectBeatSaverArchive(bytes, { limits }), (error) => error instanceof Error && message.test(error.message));
+  await assert.rejects(() => inspectBeatSaverArchive(bytes, { limits }), (error) => {
+    if (!(error instanceof Error) || !message.test(error.message) || !("code" in error) || error.code !== "archive") return false;
+    archiveFailureCodes.push(error.code);
+    return true;
+  });
 }
 
 /**
