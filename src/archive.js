@@ -22,6 +22,10 @@ export const defaultBeatSaverArchiveLimits = Object.freeze({
   maxInfoBytes: 2 * 1024 * 1024
 });
 
+/** Canonical playable order for exact Standard characteristic entries. */
+const standardDifficultyOrder = Object.freeze(["Easy", "Normal", "Hard", "Expert", "ExpertPlus"]);
+const standardDifficultyByToken = Object.freeze({ easy: "Easy", normal: "Normal", hard: "Hard", expert: "Expert", expertplus: "ExpertPlus" });
+
 /**
  * Inspect untrusted BeatSaver ZIP bytes and expose provider-neutral source data.
  *
@@ -243,12 +247,16 @@ function buildSourceManifest(info, infoPath, entries, archiveBytes) {
   }
   /** @type {BeatSaverSourceDifficulty[]} */
   const difficulties = [];
+  const seenStandardDifficulties = new Set();
   for (const payload of difficultyPayloads) {
     const characteristic = optionalString(payload.characteristic) || optionalString(payload.beatmapCharacteristicName) || optionalString(payload._beatmapCharacteristicName);
     if (characteristic !== "Standard") continue;
-    const difficulty = optionalString(payload.difficulty) || optionalString(payload._difficulty);
+    const difficultyValue = optionalString(payload.difficulty) || optionalString(payload._difficulty);
     const path = optionalString(payload.beatmapDataFilename) || optionalString(payload.beatmapFilename) || optionalString(payload._beatmapFilename);
-    if (!difficulty || !path) throw new BeatSaverVendorError("provider_payload", "Standard difficulty entry is missing difficulty or path");
+    if (!difficultyValue || !path) throw new BeatSaverVendorError("provider_payload", "Standard difficulty entry is missing difficulty or path");
+    const difficulty = canonicalStandardDifficulty(difficultyValue);
+    if (seenStandardDifficulties.has(difficulty)) throw new BeatSaverVendorError("provider_payload", `Standard difficulty ${difficulty} is duplicated`);
+    seenStandardDifficulties.add(difficulty);
     const resolvedPath = resolveArchivePath(path, entries, "difficulty");
     difficulties.push(Object.freeze({
       characteristic: "Standard",
@@ -260,6 +268,7 @@ function buildSourceManifest(info, infoPath, entries, archiveBytes) {
     }));
   }
   if (difficulties.length === 0) throw new BeatSaverVendorError("unsupported", "BeatSaver archive has no supported Standard difficulties");
+  difficulties.sort((left, right) => standardDifficultyOrder.indexOf(left.difficulty) - standardDifficultyOrder.indexOf(right.difficulty));
   const audioName = optionalString(audio.songFilename) || optionalString(info.songFilename) || optionalString(info._songFilename);
   if (!audioName) throw new BeatSaverVendorError("provider_payload", "Info.dat does not reference song audio");
   const coverName = optionalString(info.coverImageFilename) || optionalString(info._coverImageFilename);
@@ -305,6 +314,21 @@ function collectDifficultyPayloads(info) {
     }
   }
   return results;
+}
+
+/**
+ * Normalize only the five supported Beat Saber Standard difficulty identities.
+ * Separators and a literal plus sign are accepted solely to reject aliases as
+ * duplicate canonical identities instead of making archive order meaningful.
+ *
+ * @param {string} value Raw Standard difficulty label.
+ * @returns {string} Canonical difficulty.
+ */
+function canonicalStandardDifficulty(value) {
+  const token = value.toLowerCase().replace(/\+/gu, "plus").replace(/[^a-z]/gu, "");
+  const difficulty = standardDifficultyByToken[/** @type {keyof typeof standardDifficultyByToken} */ (token)];
+  if (!difficulty) throw new BeatSaverVendorError("unsupported", `Standard difficulty ${value} is unsupported`);
+  return difficulty;
 }
 
 /** @param {string} version @param {Record<string, unknown>} info @returns {2 | 3 | 4} */

@@ -38,7 +38,7 @@ Successful acquisition returns immutable normalized map/version records, the ver
 - `listEntryPaths()`;
 - `readEntry(path)`, resolving names case-insensitively and returning a defensive byte copy.
 
-The manifest includes source format major, Info.dat path, song/audio/cover metadata, supported `Standard` difficulty references, sanitized archive entries, and bounded byte counts. It contains no provider-native DTO, `Response`, archive-library object, or unrestricted raw archive handle.
+The manifest includes source format major, Info.dat path, song/audio/cover metadata, and only exact `Standard` playable difficulty references in canonical Easy, Normal, Hard, Expert, ExpertPlus order, plus sanitized archive entries and bounded byte counts. Difficulty spelling/separator aliases normalize to those identities so duplicates fail deterministically; unsupported Standard labels fail instead of disappearing. Nonstandard characteristics never become playable manifest entries, but remain in provider hash inputs where the BeatSaver format requires them. The manifest contains no provider-native DTO, `Response`, archive-library object, or unrestricted raw archive handle.
 
 ## Transport
 
@@ -55,7 +55,7 @@ Defaults are exported as `defaultBeatSaverArchiveLimits`:
 - compression ratio: 200:1;
 - Info.dat: 2 MiB.
 
-Inspection rejects absolute paths, parent traversal, control/format characters, duplicate case-insensitive Unicode-normalized paths, invalid UTF-8 names, symlinks/special files, encryption, multi-disk/ZIP64 input, unsupported compression, malformed central/local headers, filename/method/flag/size mismatches, overlapping local ranges, malformed data descriptors, CRC corruption, entry/total/ratio excess, missing or multiple Info.dat files, missing referenced files, unsupported metadata versions, and maps without a supported `Standard` difficulty.
+Inspection rejects absolute paths, parent traversal, control/format characters, duplicate case-insensitive Unicode-normalized paths, invalid UTF-8 names, symlinks/special files, encryption, multi-disk/ZIP64 input, unsupported compression, malformed central/local headers, filename/method/flag/size mismatches, overlapping local ranges, malformed data descriptors, CRC corruption, entry/total/ratio excess, missing or multiple Info.dat files, missing referenced files, unsupported metadata versions, duplicate normalized Standard difficulty identities, unsupported Standard difficulty labels, and maps without a supported exact-`Standard` difficulty.
 
 `fflate` 0.8.2 performs bounded per-entry streaming DEFLATE only after package-owned central-directory and local-header policy validates metadata, ranges, descriptors, and declared limits. Actual output length and CRC-32 are verified before an entry becomes readable; the implementation does not call whole-archive `unzipSync`.
 
@@ -69,7 +69,7 @@ npm run test:browser
 npm pack --dry-run
 ```
 
-Tests generate deterministic synthetic ZIPs in memory with matching v2/v3/v4 Info and difficulty documents. Mocked online API/CDN acquisition and local archive import must converge on the same provider-neutral manifest, source/version hash, canonical path list, entry lengths and entry byte hashes for every major. An independently hard-coded v4 golden locks raw Info, AudioData, metadata ordering, repeated shared-lightshow hashing, strict tamper rejection, and unchanged v2/v3 provider hashes. The malicious archive table exercises only the public inspector and locks its stable error code. Browser smoke performs no external request, and no third-party map/audio bytes are committed.
+Tests generate deterministic synthetic ZIPs in memory with matching v2/v3/v4 Info and difficulty documents. Mocked online API/CDN acquisition and local archive import must converge on the same provider-neutral manifest, source/version hash, canonical path list, entry lengths and entry byte hashes for every major. Mixed v3/v4 fixtures combine canonically unordered Standard entries with Lightshow, OneSaber, NoArrows, and repeated shared-lightshow references: only Standard becomes playable while the independently enumerated whole-version provider hash stream remains exact. An independently hard-coded v4 golden locks raw Info, AudioData, metadata ordering, repeated shared-lightshow hashing, strict tamper rejection, and unchanged v2/v3 provider hashes. The malicious archive table exercises only the public inspector and locks its stable error code. Browser smoke performs no external request, and no third-party map/audio bytes are committed.
 
 The normal gates are network-independent. When network access is intentionally available, `npm run test:live-v4-hash` fetches BeatSaver map `53F26` and proves its exact provider hash `addd9d6f8e7340ad6f5633947136d8475a7a99b5`; this optional live proof is not invoked by `npm test`.
 

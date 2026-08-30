@@ -44,6 +44,64 @@ export function createSyntheticBeatSaverZip(major = 2) {
   return zipSync(entries, { level: 6, mtime: fixedSyntheticZipMtime(), os: 0, attrs: 0x20 });
 }
 
+/**
+ * Build a whole-version fixture whose provider hash includes nonplayable
+ * characteristics and shared lightshow data while its playable catalog is
+ * limited to canonical Standard difficulties.
+ *
+ * @param {3 | 4} major Beat Saber metadata major.
+ * @param {{duplicateDifficulty?: boolean, unsupportedDifficulty?: boolean, misCasedStandard?: boolean}} [options] Semantic mutations.
+ * @returns {Uint8Array} Synthetic ZIP.
+ */
+export function createMixedCharacteristicBeatSaverZip(major, options = {}) {
+  const standard = [
+    difficultyPayload(major, "ExpertPlus", "Maps/ExpertPlus.dat", 9),
+    difficultyPayload(major, "Easy", "Maps/Easy.dat", 1),
+    difficultyPayload(major, "Hard", "Maps/Hard.dat", 5)
+  ];
+  if (options.misCasedStandard && standard[1]) standard[1].characteristic = "standard";
+  if (options.duplicateDifficulty) standard.push(difficultyPayload(major, "expert-plus", "Maps/ExpertPlusAlias.dat", 9));
+  if (options.unsupportedDifficulty) standard.push(difficultyPayload(major, "Master", "Maps/Master.dat", 11));
+  const nonstandard = [
+    { characteristic: "Lightshow", difficulty: "Easy", path: "Maps/Lightshow.dat", rank: 1 },
+    { characteristic: "OneSaber", difficulty: "Normal", path: "Maps/OneSaber.dat", rank: 3 },
+    { characteristic: "NoArrows", difficulty: "Expert", path: "Maps/NoArrows.dat", rank: 7 }
+  ];
+  const payloads = [nonstandard[0], standard[0], nonstandard[1], standard[1], nonstandard[2], standard[2], ...standard.slice(3)];
+  const info = major === 4 ? {
+    version: "4.0.0",
+    song: { title: "Mixed Four", subTitle: "", author: "AeroBeat" },
+    audio: { songFilename: "Audio/Song.egg", audioDataFilename: "Audio/AudioData.dat", bpm: 128, previewStartTime: 2, previewDuration: 10 },
+    coverImageFilename: "Cover.PNG",
+    difficultyBeatmaps: payloads.map((entry) => ({ characteristic: entry.characteristic, difficulty: entry.difficulty, difficultyRank: entry.rank, beatmapDataFilename: entry.path, lightshowDataFilename: "Maps/SharedLightshow.dat", noteJumpMovementSpeed: 14, noteJumpStartBeatOffset: 0 }))
+  } : {
+    version: "3.0.0",
+    songName: "Mixed Three",
+    songAuthorName: "AeroBeat",
+    levelAuthorName: "Fixture",
+    songFilename: "Audio/Song.egg",
+    coverImageFilename: "Cover.PNG",
+    beatsPerMinute: 128,
+    difficultyBeatmapSets: [
+      ...nonstandard.map((entry) => ({ beatmapCharacteristicName: entry.characteristic, difficultyBeatmaps: [{ difficulty: entry.difficulty, difficultyRank: entry.rank, beatmapFilename: entry.path, lightshowDataFilename: "Maps/SharedLightshow.dat", noteJumpMovementSpeed: 14, noteJumpStartBeatOffset: 0 }] })),
+      ...["Standard", "standard"].map((characteristic) => ({ beatmapCharacteristicName: characteristic, difficultyBeatmaps: standard.filter((entry) => entry.characteristic === characteristic).map((entry) => ({ difficulty: entry.difficulty, difficultyRank: entry.rank, beatmapFilename: entry.path, lightshowDataFilename: "Maps/SharedLightshow.dat", noteJumpMovementSpeed: 14, noteJumpStartBeatOffset: 0 })) })).filter((set) => set.difficultyBeatmaps.length > 0)
+    ]
+  };
+  /** @type {Record<string, [Uint8Array, import("fflate").ZipOptions]>} */
+  const entries = {
+    "Info.dat": syntheticZipEntry(strToU8(JSON.stringify(info))),
+    "Audio/Song.egg": syntheticZipEntry(Uint8Array.of(79, 103, 103, 83)),
+    "Cover.PNG": syntheticZipEntry(Uint8Array.of(137, 80, 78, 71)),
+    "Maps/SharedLightshow.dat": syntheticZipEntry(strToU8('{"version":"4.0.0","lightColorEventBoxGroups":[]}'))
+  };
+  if (major === 4) entries["Audio/AudioData.dat"] = syntheticZipEntry(strToU8('{"version":"4.0.0","songChecksum":"mixed"}'));
+  for (const payload of payloads) entries[payload.path] = syntheticZipEntry(strToU8(JSON.stringify(createSyntheticDifficulty(major))));
+  return zipSync(entries, { level: 6, mtime: fixedSyntheticZipMtime(), os: 0, attrs: 0x20 });
+}
+
+/** @param {3 | 4} major @param {string} difficulty @param {string} path @param {number} rank @returns {{characteristic:string,difficulty:string,path:string,rank:number}} */
+function difficultyPayload(_major, difficulty, path, rank) { return { characteristic: "Standard", difficulty, path, rank }; }
+
 /** @param {Uint8Array} bytes @returns {[Uint8Array, import("fflate").ZipOptions]} */
 function syntheticZipEntry(bytes) {
   return [bytes, { level: 6, mtime: fixedSyntheticZipMtime(), os: 0, attrs: 0x20 }];

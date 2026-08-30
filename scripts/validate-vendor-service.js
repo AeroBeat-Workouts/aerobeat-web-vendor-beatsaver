@@ -11,6 +11,7 @@ import {
   sha1Hex
 } from "../src/index.js";
 import {
+  createMixedCharacteristicBeatSaverZip,
   createSyntheticBeatSaverZip,
   createSyntheticMapPayload,
   createV4ProviderHashGoldenZip,
@@ -88,6 +89,33 @@ await assert.rejects(() => tamperedV4Service.acquireVersion(v4GoldenMap, v4Provi
   const details = /** @type {{expectedHash?: unknown, actualHash?: unknown}} */ (error.details);
   return details.expectedHash === v4ProviderHashGoldenExpected && typeof details.actualHash === "string" && details.actualHash !== v4ProviderHashGoldenExpected;
 }, "tampering any hashed v4 input must fail strict expectedHash comparison");
+
+const mixedExpectedInputs = {
+  3: ["Maps/Lightshow.dat", "Maps/SharedLightshow.dat", "Maps/OneSaber.dat", "Maps/NoArrows.dat", "Maps/ExpertPlus.dat", "Maps/Easy.dat", "Maps/Hard.dat"],
+  4: ["Audio/AudioData.dat", "Maps/Lightshow.dat", "Maps/SharedLightshow.dat", "Maps/ExpertPlus.dat", "Maps/SharedLightshow.dat", "Maps/OneSaber.dat", "Maps/SharedLightshow.dat", "Maps/Easy.dat", "Maps/SharedLightshow.dat", "Maps/NoArrows.dat", "Maps/SharedLightshow.dat", "Maps/Hard.dat", "Maps/SharedLightshow.dat"]
+};
+for (const major of /** @type {const} */ ([3, 4])) {
+  const mixedArchive = createMixedCharacteristicBeatSaverZip(major);
+  const mixedSource = await inspectBeatSaverArchive(mixedArchive);
+  const expectedInputs = mixedExpectedInputs[major];
+  assert.deepEqual(mixedSource.manifest.difficulties.map((entry) => [entry.characteristic, entry.difficulty]), [["Standard", "Easy"], ["Standard", "Hard"], ["Standard", "ExpertPlus"]], `v${major} playable catalog must contain only canonically ordered Standard difficulties`);
+  assert.deepEqual(mixedSource.manifest.hashInputPaths, expectedInputs, `v${major} provider hash inputs must retain ignored characteristics and shared lightshows`);
+  const independentHash = createHash("sha1");
+  independentHash.update(mixedSource.readEntry(mixedSource.manifest.infoPath));
+  for (const path of expectedInputs) independentHash.update(mixedSource.readEntry(path));
+  assert.equal(await computeBeatSaverMapHash(mixedSource), independentHash.digest("hex"), `v${major} provider hash must retain the independently enumerated whole-version stream`);
+}
+
+const mixedAcquireArchive = createMixedCharacteristicBeatSaverZip(4);
+const mixedAcquireSource = await inspectBeatSaverArchive(mixedAcquireArchive);
+const mixedAcquireHash = await computeBeatSaverMapHash(mixedAcquireSource);
+let mixedAcquireFetches = 0;
+const mixedAcquireService = createAeroBeatSaverVendorService({ fetch: async () => { mixedAcquireFetches += 1; return new Response(mixedAcquireArchive, { status: 200, headers: { "content-length": String(mixedAcquireArchive.byteLength), "content-type": "application/zip" } }); } });
+const mixedAcquireMap = normalizeMap(createSyntheticMapPayload(mixedAcquireHash, "https://cdn.example.invalid/mixed-v4.zip", "MIXEDV4"));
+const mixedAcquired = await mixedAcquireService.acquireVersion(mixedAcquireMap, mixedAcquireHash);
+assert.equal(mixedAcquireFetches, 1, "whole-version acquisition must fetch the mixed archive exactly once");
+assert.deepEqual(mixedAcquired.source.manifest.difficulties.map((entry) => entry.difficulty), ["Easy", "Hard", "ExpertPlus"]);
+assert.equal(JSON.stringify(mixedAcquireService.snapshot()).includes("Uint8Array"), false, "vendor snapshot must not expose acquired archive bytes");
 
 const local = await service.importLocalArchive(new Blob([archive]));
 assert.equal(local.sourceHash, hash);

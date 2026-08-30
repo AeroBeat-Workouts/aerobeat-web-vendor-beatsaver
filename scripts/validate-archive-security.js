@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { Zip, ZipDeflate, strToU8, zipSync } from "fflate";
 import { inspectBeatSaverArchive } from "../src/index.js";
-import { createSyntheticBeatSaverZip } from "./fixture-helpers.js";
+import { createMixedCharacteristicBeatSaverZip, createSyntheticBeatSaverZip } from "./fixture-helpers.js";
 
 /** @type {string[]} */
 const archiveFailureCodes = [];
@@ -13,6 +13,14 @@ for (const major of /** @type {const} */ ([2, 3, 4])) {
   assert.equal(source.manifest.sourceFormatMajor, major);
   assert.equal(source.manifest.difficulties.length, 1);
   assert.equal(source.manifest.difficulties[0]?.characteristic, "Standard");
+}
+
+for (const major of /** @type {const} */ ([3, 4])) {
+  await assert.rejects(() => inspectBeatSaverArchive(createMixedCharacteristicBeatSaverZip(major, { duplicateDifficulty: true })), (error) => error instanceof Error && "code" in error && error.code === "provider_payload" && /Standard difficulty ExpertPlus is duplicated/u.test(error.message), `v${major} duplicate normalized Standard identity must fail deterministically`);
+  await assert.rejects(() => inspectBeatSaverArchive(createMixedCharacteristicBeatSaverZip(major, { unsupportedDifficulty: true })), (error) => error instanceof Error && "code" in error && error.code === "unsupported" && /Standard difficulty Master is unsupported/u.test(error.message), `v${major} unsupported Standard difficulty must fail rather than disappear`);
+  const exactCharacteristic = await inspectBeatSaverArchive(createMixedCharacteristicBeatSaverZip(major, { misCasedStandard: true }));
+  assert.deepEqual(exactCharacteristic.manifest.difficulties.map((entry) => entry.difficulty), ["Hard", "ExpertPlus"], `v${major} lowercase standard characteristic must remain nonplayable`);
+  assert.ok(exactCharacteristic.manifest.hashInputPaths.includes("Maps/Easy.dat"), `v${major} ignored lowercase characteristic must remain in provider hash inputs`);
 }
 
 const descriptorZip = await createDescriptorZip();
