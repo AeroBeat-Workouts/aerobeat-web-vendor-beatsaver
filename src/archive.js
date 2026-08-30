@@ -327,7 +327,7 @@ function collectDifficultyPayloads(info) {
 function canonicalStandardDifficulty(value) {
   const token = value.toLowerCase().replace(/\+/gu, "plus").replace(/[^a-z]/gu, "");
   const difficulty = standardDifficultyByToken[/** @type {keyof typeof standardDifficultyByToken} */ (token)];
-  if (!difficulty) throw new BeatSaverVendorError("unsupported", `Standard difficulty ${value} is unsupported`);
+  if (!difficulty) throw new BeatSaverVendorError("unsupported", "Standard difficulty label is unsupported");
   return difficulty;
 }
 

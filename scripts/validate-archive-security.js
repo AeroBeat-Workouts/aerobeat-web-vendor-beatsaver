@@ -17,7 +17,7 @@ for (const major of /** @type {const} */ ([2, 3, 4])) {
 
 for (const major of /** @type {const} */ ([3, 4])) {
   await assert.rejects(() => inspectBeatSaverArchive(createMixedCharacteristicBeatSaverZip(major, { duplicateDifficulty: true })), (error) => error instanceof Error && "code" in error && error.code === "provider_payload" && /Standard difficulty ExpertPlus is duplicated/u.test(error.message), `v${major} duplicate normalized Standard identity must fail deterministically`);
-  await assert.rejects(() => inspectBeatSaverArchive(createMixedCharacteristicBeatSaverZip(major, { unsupportedDifficulty: true })), (error) => error instanceof Error && "code" in error && error.code === "unsupported" && /Standard difficulty Master is unsupported/u.test(error.message), `v${major} unsupported Standard difficulty must fail rather than disappear`);
+  await assert.rejects(() => inspectBeatSaverArchive(createMixedCharacteristicBeatSaverZip(major, { unsupportedDifficulty: true })), (error) => error instanceof Error && "code" in error && error.code === "unsupported" && error.message === "Standard difficulty label is unsupported" && !error.message.includes("Master"), `v${major} unsupported Standard difficulty must fail without echoing provider payload`);
   const exactCharacteristic = await inspectBeatSaverArchive(createMixedCharacteristicBeatSaverZip(major, { misCasedStandard: true }));
   assert.deepEqual(exactCharacteristic.manifest.difficulties.map((entry) => entry.difficulty), ["Hard", "ExpertPlus"], `v${major} lowercase standard characteristic must remain nonplayable`);
   assert.ok(exactCharacteristic.manifest.hashInputPaths.includes("Maps/Easy.dat"), `v${major} ignored lowercase characteristic must remain in provider hash inputs`);
