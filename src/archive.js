@@ -1,5 +1,6 @@
 // @ts-check
 
+import { Sha1, sha1Hex as sharedSha1Hex } from "@aerobeat/web-hash";
 import { Inflate } from "fflate";
 import { BeatSaverVendorError } from "./errors.js";
 import { finiteNumber, optionalArray, optionalRecord, optionalString, requireRecord } from "./normalize.js";
@@ -71,13 +72,32 @@ export async function inspectBeatSaverArchive(input, options = {}) {
 }
 
 /**
+ * Hash one bounded byte value through the shared owner's production `auto`
+ * backend. The helper snapshots the exact visible view before native hashing.
+ *
  * @param {Uint8Array} bytes Bytes.
  * @returns {Promise<string>} Lowercase SHA-1.
  */
 export async function sha1Hex(bytes) {
-  const copy = Uint8Array.from(bytes);
-  const digest = await crypto.subtle.digest("SHA-1", copy.buffer);
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  try {
+    return await sharedSha1Hex(bytes);
+  } catch (error) {
+    throw hashFailure(error);
+  }
+}
+
+/**
+ * Hash one potentially large archive without an additional full-input copy.
+ *
+ * @param {Uint8Array} bytes Archive bytes.
+ * @returns {string} Lowercase SHA-1.
+ */
+export function sha1ArchiveHex(bytes) {
+  try {
+    return new Sha1().update(bytes).digestHex();
+  } catch (error) {
+    throw hashFailure(error);
+  }
 }
 
 /**
@@ -90,13 +110,20 @@ export async function sha1Hex(bytes) {
  * @returns {Promise<string>} Lowercase provider map hash.
  */
 export async function computeBeatSaverMapHash(source) {
-  const paths = [source.manifest.infoPath, ...source.manifest.hashInputPaths];
-  const parts = paths.map((path) => source.readEntry(path));
-  const length = parts.reduce((sum, part) => sum + part.byteLength, 0);
-  const combined = new Uint8Array(length);
-  let offset = 0;
-  for (const part of parts) { combined.set(part, offset); offset += part.byteLength; }
-  return sha1Hex(combined);
+  try {
+    const hasher = new Sha1();
+    hasher.update(source.readEntry(source.manifest.infoPath));
+    for (const path of source.manifest.hashInputPaths) hasher.update(source.readEntry(path));
+    return hasher.digestHex();
+  } catch (error) {
+    if (error instanceof BeatSaverVendorError) throw error;
+    throw hashFailure(error);
+  }
+}
+
+/** @param {unknown} cause @returns {BeatSaverVendorError} */
+function hashFailure(cause) {
+  return new BeatSaverVendorError("integrity", "BeatSaver integrity verification failed", { cause });
 }
 
 /** @typedef {BeatSaverArchiveEntry & Readonly<{originalPath: string, flags: number, crc32: number, localHeaderOffset: number, dataOffset: number, dataEnd: number, recordEnd: number}>} InternalArchiveEntry */

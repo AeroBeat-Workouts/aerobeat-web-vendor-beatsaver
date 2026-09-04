@@ -1,6 +1,6 @@
 // @ts-check
 
-import { computeBeatSaverMapHash, inspectBeatSaverArchive, sha1Hex } from "./archive.js";
+import { computeBeatSaverMapHash, inspectBeatSaverArchive, sha1ArchiveHex } from "./archive.js";
 import { BeatSaverVendorError, toBeatSaverVendorError } from "./errors.js";
 import { buildLatestParameters, buildSearchParameters, normalizeMap, normalizeMapCollection, selectVersion } from "./normalize.js";
 import { BeatSaverTransport } from "./transport.js";
@@ -94,7 +94,7 @@ export class AeroBeatSaverVendorService {
       this.state.lastMapId = map.mapId;
       const bytes = await this.transport.getBytes(new URL(version.downloadUrl), { signal: options.signal, onProgress: options.onProgress, maxBytes: this.maxDownloadBytes });
       options.signal?.throwIfAborted();
-      const archiveSha1 = await sha1Hex(bytes);
+      const archiveSha1 = sha1ArchiveHex(bytes);
       const source = await inspectBeatSaverArchive(bytes, { limits: this.archiveLimits });
       const sourceHash = await computeBeatSaverMapHash(source);
       if (sourceHash !== version.hash) {
@@ -118,7 +118,7 @@ export class AeroBeatSaverVendorService {
       options.signal?.throwIfAborted();
       const bytes = await inputBytes(input);
       if (bytes.byteLength > this.maxDownloadBytes) throw new BeatSaverVendorError("archive", "Local BeatSaver archive exceeds byte limit", { details: { size: bytes.byteLength, maximum: this.maxDownloadBytes } });
-      const archiveSha1 = await sha1Hex(bytes);
+      const archiveSha1 = sha1ArchiveHex(bytes);
       options.signal?.throwIfAborted();
       const source = await inspectBeatSaverArchive(bytes, { limits: this.archiveLimits });
       const sourceHash = await computeBeatSaverMapHash(source);

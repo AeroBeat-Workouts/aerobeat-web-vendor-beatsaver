@@ -10,6 +10,7 @@ import {
   normalizeMap,
   sha1Hex
 } from "../src/index.js";
+import { sha1ArchiveHex } from "../src/archive.js";
 import {
   createMixedCharacteristicBeatSaverZip,
   createSyntheticBeatSaverZip,
@@ -24,6 +25,16 @@ const archive = createSyntheticBeatSaverZip(2);
 const archiveSha1 = await sha1Hex(archive);
 const hash = await computeBeatSaverMapHash(await inspectBeatSaverArchive(archive));
 const mapPayload = createSyntheticMapPayload(hash);
+const rangedBacking = Uint8Array.of(9, 9, 0, 128, 255, 9);
+assert.equal(await sha1Hex(rangedBacking.subarray(2, 5)), createHash("sha1").update(rangedBacking.subarray(2, 5)).digest("hex"), "shared helper must hash only the visible typed-array range");
+const largeHashInput = new Uint8Array((8 * 1024 * 1024) + 13);
+for (let index = 0; index < largeHashInput.byteLength; index += 1) largeHashInput[index] = index & 0xff;
+assert.equal(sha1ArchiveHex(largeHashInput), createHash("sha1").update(largeHashInput).digest("hex"), "incremental archive hashing must preserve a representative large exact byte stream");
+await assert.rejects(() => sha1Hex(/** @type {never} */ ({})), (error) => {
+  if (!(error instanceof Error) || !("code" in error) || error.code !== "integrity" || error.message !== "BeatSaver integrity verification failed") return false;
+  assert.doesNotMatch(error.message, /crypto|digest|subtle|backend/iu);
+  return true;
+}, "hash implementation failures must be bounded integrity errors, never misleading transport internals");
 let retryCalls = 0;
 /** @type {import("../src/transport.js").BeatSaverFetch} */
 const fakeFetch = async (input, init) => {

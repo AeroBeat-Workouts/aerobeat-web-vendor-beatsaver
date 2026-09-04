@@ -10,7 +10,7 @@ This repository owns only BeatSaver-specific browser concerns:
 - search, latest, detail-by-ID, and detail-by-hash operations;
 - strict narrowing of provider DTOs into immutable camelCase records;
 - explicit version/difficulty discovery and selected-version acquisition;
-- provider BeatSaver/SongCore map-content SHA-1 verification and local ZIP/File intake;
+- provider BeatSaver/SongCore map-content SHA-1 verification and local ZIP/File intake through the shared `@aerobeat/web-hash` owner;
 - untrusted ZIP inspection and normalized Beat Saber v2/v3/v4 source manifests;
 - provider status, capabilities, bounded telemetry, fixtures, and provenance.
 
@@ -42,7 +42,7 @@ The manifest includes source format major, Info.dat path, song/audio/cover metad
 
 ## Transport
 
-The default path uses browser `fetch` against credential-free HTTPS BeatSaver API/CDN URLs with credentials omitted. A caller may inject a fetch-compatible transport or `proxyUrl(URL)` resolver; production and final redirected URLs remain HTTPS, while HTTP is accepted only for explicit localhost proxy development. Operations accept `AbortSignal`; a package-owned race enforces deadlines even when an injected fetch ignores its signal. Downloads validate content length when present and report bounded byte progress. Timeouts, transient network failures, and HTTP 429/502/503/504 use bounded retry; 429 honors `Retry-After` up to 60 seconds.
+The default path uses browser `fetch` against credential-free HTTPS BeatSaver API/CDN URLs with credentials omitted. Raw archives and ordered provider streams use the shared incremental SHA-1 implementation, avoiding an additional whole-archive hash copy; bounded public `sha1Hex()` uses the shared automatic native/fallback helper. Hash implementation failures are reported as bounded `integrity` errors rather than transport failures. A caller may inject a fetch-compatible transport or `proxyUrl(URL)` resolver; production and final redirected URLs remain HTTPS, while HTTP is accepted only for explicit localhost proxy development. Operations accept `AbortSignal`; a package-owned race enforces deadlines even when an injected fetch ignores its signal. Downloads validate content length when present and report bounded byte progress. Timeouts, transient network failures, and HTTP 429/502/503/504 use bounded retry; 429 honors `Retry-After` up to 60 seconds.
 
 ## Archive Security Limits
 
@@ -69,7 +69,7 @@ npm run test:browser
 npm pack --dry-run
 ```
 
-Tests generate deterministic synthetic ZIPs in memory with matching v2/v3/v4 Info and difficulty documents. Mocked online API/CDN acquisition and local archive import must converge on the same provider-neutral manifest, source/version hash, canonical path list, entry lengths and entry byte hashes for every major. Mixed v3/v4 fixtures combine canonically unordered Standard entries with Lightshow, OneSaber, NoArrows, and repeated shared-lightshow references: only Standard becomes playable while the independently enumerated whole-version provider hash stream remains exact. An independently hard-coded v4 golden locks raw Info, AudioData, metadata ordering, repeated shared-lightshow hashing, strict tamper rejection, and unchanged v2/v3 provider hashes. The malicious archive table exercises only the public inspector and locks its stable error code. Browser smoke performs no external request, and no third-party map/audio bytes are committed.
+Tests generate deterministic synthetic ZIPs in memory with matching v2/v3/v4 Info and difficulty documents. Mocked online API/CDN acquisition and local archive import must converge on the same provider-neutral manifest, source/version hash, canonical path list, entry lengths and entry byte hashes for every major. Mixed v3/v4 fixtures combine canonically unordered Standard entries with Lightshow, OneSaber, NoArrows, and repeated shared-lightshow references: only Standard becomes playable while the independently enumerated whole-version provider hash stream remains exact. An independently hard-coded v4 golden locks raw Info, AudioData, metadata ordering, repeated shared-lightshow hashing, strict tamper rejection, and unchanged v2/v3 provider hashes. The malicious archive table exercises only the public inspector and locks its stable error code. Browser validation performs no external request and uses only the deterministic synthetic ZIP contract. It first asserts secure localhost WebCrypto presence and genuine non-loopback Tailscale-style HTTP WebCrypto absence, then exercises actual service download and local `Blob` ZIP hashing/inspection with identical locked provider/raw identities and native/fallback parity. No third-party map/audio bytes are committed.
 
 The normal gates are network-independent. When network access is intentionally available, `npm run test:live-v4-hash` fetches BeatSaver map `53F26` and proves its exact provider hash `addd9d6f8e7340ad6f5633947136d8475a7a99b5`; this optional live proof is not invoked by `npm test`.
 
