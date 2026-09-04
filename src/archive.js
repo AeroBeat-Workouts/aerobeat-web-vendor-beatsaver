@@ -241,8 +241,7 @@ function parseCentralDirectory(bytes, limits) {
  * @returns {BeatSaverSourceManifest} Manifest.
  */
 function buildSourceManifest(info, infoPath, entries, archiveBytes) {
-  const versionText = optionalString(info.version) || optionalString(info._version);
-  const sourceFormatMajor = detectFormatMajor(versionText, info);
+  const sourceFormatMajor = detectFormatMajor(info);
   const song = optionalRecord(info.song);
   const audio = optionalRecord(info.audio);
   const difficultyPayloads = collectDifficultyPayloads(info);
@@ -358,14 +357,31 @@ function canonicalStandardDifficulty(value) {
   return difficulty;
 }
 
-/** @param {string} version @param {Record<string, unknown>} info @returns {2 | 3 | 4} */
-function detectFormatMajor(version, info) {
-  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
-  if (major === 2 || major === 3 || major === 4) return major;
-  if (info._version !== undefined || info._difficultyBeatmapSets !== undefined) return 2;
-  if (info.song !== undefined || info.audio !== undefined || info.difficultyBeatmaps !== undefined) return 4;
-  if (info.version !== undefined || info.difficultyBeatmapSets !== undefined) return 3;
-  throw new BeatSaverVendorError("unsupported", "Unsupported or missing Beat Saber metadata version", { details: { version } });
+/** @param {Record<string, unknown>} info @returns {2 | 3 | 4} */
+function detectFormatMajor(info) {
+  const declarationKeys = ["version", "_version"].filter((key) => Object.hasOwn(info, key));
+  if (declarationKeys.length > 0) {
+    /** @type {Set<2 | 3 | 4>} */
+    const majors = new Set();
+    for (const key of declarationKeys) {
+      const declaration = info[key];
+      if (typeof declaration !== "string") throw unsupportedVersionDeclaration();
+      const match = /^(2|3|4)\.[0-9]+\.[0-9]+$/u.exec(declaration);
+      if (!match) throw unsupportedVersionDeclaration();
+      majors.add(/** @type {2 | 3 | 4} */ (Number(match[1])));
+    }
+    if (majors.size !== 1) throw unsupportedVersionDeclaration();
+    return /** @type {2 | 3 | 4} */ ([...majors][0]);
+  }
+  if (Object.hasOwn(info, "_difficultyBeatmapSets")) return 2;
+  if (Object.hasOwn(info, "song") || Object.hasOwn(info, "audio") || Object.hasOwn(info, "difficultyBeatmaps")) return 4;
+  if (Object.hasOwn(info, "difficultyBeatmapSets")) return 3;
+  throw new BeatSaverVendorError("unsupported", "Unsupported or missing Beat Saber metadata version");
+}
+
+/** @returns {BeatSaverVendorError} */
+function unsupportedVersionDeclaration() {
+  return new BeatSaverVendorError("unsupported", "Beat Saber metadata version declaration is unsupported or malformed");
 }
 
 /** @param {string} requested @param {readonly InternalArchiveEntry[]} entries @param {string} role @returns {string} */

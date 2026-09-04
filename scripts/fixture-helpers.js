@@ -4,9 +4,10 @@ import { strToU8, zipSync } from "fflate";
 
 /**
  * @param {2 | 3 | 4} major Beat Saber metadata major.
+ * @param {{mutateInfo?: (info: Record<string, unknown>) => void}} [options] Test-only Info.dat mutation.
  * @returns {Uint8Array} Synthetic ZIP.
  */
-export function createSyntheticBeatSaverZip(major = 2) {
+export function createSyntheticBeatSaverZip(major = 2, options = {}) {
   const difficulty = createSyntheticDifficulty(major);
   const info = major === 4 ? {
     version: "4.0.0",
@@ -33,6 +34,7 @@ export function createSyntheticBeatSaverZip(major = 2) {
     _beatsPerMinute: 128,
     _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: [{ _difficulty: "Expert", _difficultyRank: 7, _beatmapFilename: "Maps/Expert.dat", _noteJumpMovementSpeed: 14, _noteJumpStartBeatOffset: 0 }] }]
   };
+  options.mutateInfo?.(/** @type {Record<string, unknown>} */ (info));
   /** @type {Record<string, [Uint8Array, import("fflate").ZipOptions]>} */
   const entries = {
     "Info.dat": syntheticZipEntry(strToU8(JSON.stringify(info))),
