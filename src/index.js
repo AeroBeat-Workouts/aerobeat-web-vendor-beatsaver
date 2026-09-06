@@ -16,6 +16,12 @@ export {
   normalizeEntryPath,
   sha1Hex
 } from "./archive.js";
+export {
+  defaultBeatSaverNotePalette,
+  resolveDifficultyNotePalette,
+  sanitizeObjectColorPair,
+  sanitizeV4HexColorPair
+} from "./note-palette.js";
 export { AeroBeatSaverVendorService, beatSaverVendorCapabilities } from "./service.js";
 
 import { AeroBeatSaverVendorService, beatSaverVendorCapabilities } from "./service.js";

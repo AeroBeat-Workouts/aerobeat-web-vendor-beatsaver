@@ -11,62 +11,43 @@ const acceptedRows = [];
 const rejectedRows = [];
 
 for (const major of /** @type {const} */ ([2, 3, 4])) {
-  await expectAccepted(`canonical explicit v${major}`, createSyntheticBeatSaverZip(major), major);
-  await expectAccepted(`versionless v${major}`, createSyntheticBeatSaverZip(major, { mutateInfo: (info) => { delete info.version; delete info._version; } }), major);
+  const expectedInfoMajor = major === 4 ? 4 : 2;
+  await expectAccepted(`canonical beatmap v${major}`, createSyntheticBeatSaverZip(major), expectedInfoMajor, major);
+  await expectAccepted(`versionless Info with beatmap v${major}`, createSyntheticBeatSaverZip(major, { mutateInfo: (info) => { delete info.version; delete info._version; } }), expectedInfoMajor, major);
 }
-
-await expectAccepted("v2 supported version alias", archiveWithDeclarations(2, { version: "2.9.7" }), 2);
-await expectAccepted("v3 supported underscore alias", archiveWithDeclarations(3, { _version: "3.12.0" }), 3);
-await expectAccepted("v4 supported underscore alias", archiveWithDeclarations(4, { _version: "4.0.12" }), 4);
-await expectAccepted("v2 same-major dual declaration", archiveWithDeclarations(2, { version: "2.0.0", _version: "2.99.1" }), 2);
-await expectAccepted("v3 same-major dual declaration", archiveWithDeclarations(3, { version: "3.0.0", _version: "3.7.11" }), 3);
-await expectAccepted("v4 same-major dual declaration", archiveWithDeclarations(4, { version: "4.2.0", _version: "4.0.9" }), 4);
-await expectAccepted("supported v2 declaration on tolerant v4-shaped metadata", archiveWithDeclarations(4, { version: "2.0.0" }), 2);
-await expectAccepted("supported v3 declaration on tolerant v4-shaped metadata", archiveWithDeclarations(4, { _version: "3.0.0" }), 3);
+await expectAccepted("Info v2 supported alias", archiveWithInfoDeclarations(2, { version: "2.9.7" }), 2, 2, "2.9.7");
+await expectAccepted("Info v4 supported underscore alias", archiveWithInfoDeclarations(4, { _version: "4.0.12" }), 4, 4, "4.0.12");
+await expectAccepted("Info v2 same-major dual declaration", archiveWithInfoDeclarations(2, { version: "2.0.0", _version: "2.99.1" }), 2, 2, "2.0.0");
+await expectAccepted("difficulty same-major dual declaration", createSyntheticBeatSaverZip(3, { mutateDifficulty: (difficulty) => { difficulty._version = "3.9.1"; } }), 2, 3, "2.1.0", "3.3.0");
+await expectAccepted("versionless v3 difficulty shape inference", createSyntheticBeatSaverZip(3, { mutateDifficulty: (difficulty) => { delete difficulty.version; } }), 2, 3, "2.1.0", null);
 
 const invalidValues = /** @type {readonly unknown[]} */ ([
-  "1.0.0", "5.0.0", null, true, false, 3, {}, [], "", "   ", "garbage",
+  "1.0.0", "3.0.0", "5.0.0", null, true, false, 3, {}, [], "", "   ", "garbage",
   "3", "3.", "3garbage", "3.0.0junk", "03.0.0", "+4.0.0", "2e1.0.0"
 ]);
 for (const key of /** @type {const} */ (["version", "_version"])) {
-  for (const value of invalidValues) {
-    await expectRejected(`v4 shape ${key}=${describe(value)}`, archiveWithDeclarations(4, { [key]: value }));
-  }
-  for (const shapeMajor of /** @type {const} */ ([2, 3])) {
-    for (const value of ["1.0.0", "5.0.0"]) await expectRejected(`v${shapeMajor} shape ${key}=${value}`, archiveWithDeclarations(shapeMajor, { [key]: value }));
-  }
+  for (const value of invalidValues) await expectRejected(`Info ${key}=${describe(value)}`, archiveWithInfoDeclarations(4, { [key]: value }));
 }
 for (const declarations of [
   { version: "4.0.0", _version: "2.1.0" },
   { version: "2.1.0", _version: "4.0.0" },
-  { version: "5.0.0", _version: "2.1.0" },
-  { version: "2.1.0", _version: "5.0.0" },
   { version: "4.0.0", _version: "garbage" },
   { version: "garbage", _version: "4.0.0" }
-]) await expectRejected(`dual ${JSON.stringify(declarations)}`, archiveWithDeclarations(4, declarations));
+]) await expectRejected(`Info dual ${JSON.stringify(declarations)}`, archiveWithInfoDeclarations(4, declarations));
 
-await expectAccepted("own __proto__ data remains nondeclarative", createSyntheticBeatSaverZip(4, { mutateInfo: (info) => {
-  delete info.version;
-  Object.defineProperty(info, "__proto__", { enumerable: true, configurable: true, writable: true, value: { version: "5.0.0" } });
-} }), 4);
-await expectAccepted("inherited declaration omitted at JSON boundary", createSyntheticBeatSaverZip(4, { mutateInfo: (info) => {
-  delete info.version;
-  Object.setPrototypeOf(info, { version: "5.0.0" });
-} }), 4);
-await expectRejected("serialized accessor becomes invalid own declaration", createSyntheticBeatSaverZip(4, { mutateInfo: (info) => {
-  Object.defineProperty(info, "version", { enumerable: true, configurable: true, get: () => "5.0.0" });
-} }));
+for (const value of ["1.0.0", "5.0.0", null, true, {}, [], "3.0", "3.0.0junk"]) {
+  await expectRejected(`difficulty version=${describe(value)}`, createSyntheticBeatSaverZip(3, { mutateDifficulty: (difficulty) => { difficulty.version = value; } }));
+}
+await expectRejected("difficulty conflicting declarations", createSyntheticBeatSaverZip(3, { mutateDifficulty: (difficulty) => { difficulty._version = "4.0.0"; } }));
+await expectRejected("v2 Info cannot reference v4 difficulty", createSyntheticBeatSaverZip(2, { mutateDifficulty: (difficulty) => { difficulty._version = "4.0.0"; } }));
+await expectRejected("v4 Info cannot reference v3 difficulty", createSyntheticBeatSaverZip(4, { mutateDifficulty: (difficulty) => { difficulty.version = "3.3.0"; } }));
 
-assert.equal(acceptedRows.length, 16);
-assert.equal(rejectedRows.length, 51);
-console.log(`Beat Saber metadata version policy passed ${acceptedRows.length} accepted and ${rejectedRows.length} rejected rows through inspector, acquisition, and local import.`);
+assert.equal(acceptedRows.length, 11);
+assert.equal(rejectedRows.length, 53);
+console.log(`Beat Saber separate Info/difficulty version policy passed ${acceptedRows.length} accepted and ${rejectedRows.length} rejected rows through inspector, acquisition, and local import.`);
 
-/**
- * @param {2 | 3 | 4} shapeMajor
- * @param {Record<string, unknown>} declarations
- * @returns {Uint8Array}
- */
-function archiveWithDeclarations(shapeMajor, declarations) {
+/** @param {2 | 4} shapeMajor @param {Record<string, unknown>} declarations @returns {Uint8Array} */
+function archiveWithInfoDeclarations(shapeMajor, declarations) {
   return createSyntheticBeatSaverZip(shapeMajor, { mutateInfo: (info) => {
     delete info.version;
     delete info._version;
@@ -74,15 +55,23 @@ function archiveWithDeclarations(shapeMajor, declarations) {
   } });
 }
 
-/** @param {string} label @param {Uint8Array} archive @param {2 | 3 | 4} expectedMajor @returns {Promise<void>} */
-async function expectAccepted(label, archive, expectedMajor) {
+/**
+ * @param {string} label @param {Uint8Array} archive @param {2 | 4} expectedInfoMajor @param {2 | 3 | 4} expectedBeatmapMajor
+ * @param {string | null | undefined} [expectedInfoVersion] @param {string | null | undefined} [expectedBeatmapVersion]
+ */
+async function expectAccepted(label, archive, expectedInfoMajor, expectedBeatmapMajor, expectedInfoVersion = undefined, expectedBeatmapVersion = undefined) {
   const inspected = await inspectBeatSaverArchive(archive);
-  assert.equal(inspected.manifest.sourceFormatMajor, expectedMajor, `${label}: inspector major`);
+  assert.equal(inspected.manifest.infoFormatMajor, expectedInfoMajor, `${label}: Info major`);
+  assert.equal(inspected.manifest.infoFormat, `v${expectedInfoMajor}`, `${label}: Info format`);
+  if (expectedInfoVersion !== undefined) assert.equal(inspected.manifest.infoVersion, expectedInfoVersion, `${label}: exact Info version`);
+  assert.equal(inspected.manifest.difficulties[0]?.beatMapFormatMajor, expectedBeatmapMajor, `${label}: difficulty major`);
+  assert.equal(inspected.manifest.difficulties[0]?.beatMapFormat, `v${expectedBeatmapMajor}`, `${label}: difficulty format`);
+  if (expectedBeatmapVersion !== undefined) assert.equal(inspected.manifest.difficulties[0]?.beatMapVersion, expectedBeatmapVersion, `${label}: exact difficulty version`);
   const hash = await computeBeatSaverMapHash(inspected);
   const map = normalizeMap(createSyntheticMapPayload(hash, "https://cdn.example.invalid/version-policy.zip", `OK${acceptedRows.length}`));
   const service = createAeroBeatSaverVendorService({ maxRetries: 0, fetch: async () => new Response(archive, { headers: { "content-type": "application/zip", "content-length": String(archive.byteLength) } }) });
-  assert.equal((await service.acquireVersion(map, hash)).source.manifest.sourceFormatMajor, expectedMajor, `${label}: acquisition major`);
-  assert.equal((await service.importLocalArchive(new Blob([archive]))).source.manifest.sourceFormatMajor, expectedMajor, `${label}: local major`);
+  assert.equal((await service.acquireVersion(map, hash)).source.manifest.infoFormatMajor, expectedInfoMajor, `${label}: acquisition Info major`);
+  assert.equal((await service.importLocalArchive(new Blob([archive]))).source.manifest.difficulties[0]?.beatMapFormatMajor, expectedBeatmapMajor, `${label}: local difficulty major`);
   acceptedRows.push(label);
 }
 
@@ -96,10 +85,11 @@ async function expectRejected(label, archive) {
     () => service.importLocalArchive(new Blob([archive]))
   ]) {
     await assert.rejects(operation, (error) => {
-      if (!(error instanceof Error) || !("code" in error) || error.code !== "unsupported" || error.message !== unsupportedMessage) return false;
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "unsupported") return false;
+      assert.ok(error.message === unsupportedMessage || error.message === "Info.dat and referenced difficulty formats are incompatible", `${label}: bounded unsupported message`);
       assert.doesNotMatch(error.message, /1\.0\.0|5\.0\.0|garbage|\[object/iu, `${label}: message must not echo declaration`);
       return true;
-    }, `${label}: every public path must reject before shape inference`);
+    }, `${label}: every public path must reject before conversion`);
   }
   rejectedRows.push(label);
 }

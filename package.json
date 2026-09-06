@@ -21,7 +21,8 @@
     "check:components": "node scripts/validate-component-rules.js",
     "check:contract": "node scripts/validate-vendor-contract.js",
     "test": "npm run check && npm run test:unit",
-    "test:unit": "node scripts/validate-vendor-service.js && node scripts/validate-archive-security.js && node scripts/validate-metadata-version-policy.js",
+    "test:unit": "node scripts/validate-vendor-service.js && node scripts/validate-archive-security.js && node scripts/validate-metadata-version-policy.js && node scripts/validate-note-palette-authority.js",
+    "test:cached-palette-oracle": "node scripts/validate-public-map-palette-oracle.js",
     "test:live-v4-hash": "node scripts/validate-live-v4-provider-hash.js",
     "test:browser": "node scripts/validate-browser-smoke.js",
     "demo": "npm --prefix .testbed run demo",
@@ -32,6 +33,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
+    "@aerobeat/web-contracts": "file:../aerobeat-web-contracts",
     "@aerobeat/web-hash": "file:../aerobeat-web-hash",
     "fflate": "^0.8.2"
   }

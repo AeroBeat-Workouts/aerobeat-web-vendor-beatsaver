@@ -120,14 +120,14 @@ try {
         localSourceHash: local.sourceHash,
         onlineArchiveSha1: online.archiveSha1,
         localArchiveSha1: local.archiveSha1,
-        sourceFormatMajor: online.source.manifest.sourceFormatMajor,
+        infoFormatMajor: online.source.manifest.infoFormatMajor,
         byteLength: fixtureBytes.byteLength,
         auto: await vendor.sha1Hex(fixtureBytes),
         native,
         nativeError,
         fallback,
         expectedRawHash,
-        versionlessMajors: [versionlessInspect.manifest.sourceFormatMajor, versionlessOnline.source.manifest.sourceFormatMajor, versionlessLocal.source.manifest.sourceFormatMajor],
+        versionlessMajors: [versionlessInspect.manifest.infoFormatMajor, versionlessOnline.source.manifest.infoFormatMajor, versionlessLocal.source.manifest.infoFormatMajor],
         invalidCodes
       };
     }, { secure: expectedSecure, providerPayload: mapPayload, versionlessProviderPayload: versionlessMapPayload, invalidProviderPayload: invalidVersionMapPayload, expectedProviderHash: expectedSourceHash, expectedRawHash: expectedArchiveSha1, providerDownloadUrl: downloadUrl, versionlessProviderDownloadUrl: versionlessDownloadUrl, invalidProviderDownloadUrl: invalidVersionDownloadUrl });
@@ -142,7 +142,7 @@ try {
     assert.equal(result.localArchiveSha1, expectedArchiveSha1);
     assert.equal(result.auto, expectedArchiveSha1);
     assert.equal(result.fallback, expectedArchiveSha1);
-    assert.equal(result.sourceFormatMajor, 2);
+    assert.equal(result.infoFormatMajor, 2);
     assert.equal(result.byteLength, archive.byteLength);
     assert.deepEqual(result.versionlessMajors, [4, 4, 4]);
     assert.deepEqual(result.invalidCodes, ["unsupported", "unsupported", "unsupported"]);

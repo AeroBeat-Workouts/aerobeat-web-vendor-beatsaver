@@ -70,7 +70,7 @@ const progress = [];
 const acquired = await service.acquireVersion(detail, hash, { onProgress: (event) => progress.push(event.loadedBytes) });
 assert.equal(acquired.sourceHash, hash);
 assert.equal(acquired.archiveSha1, archiveSha1);
-assert.equal(acquired.source.manifest.sourceFormatMajor, 2);
+assert.equal(acquired.source.manifest.infoFormatMajor, 2);
 assert.equal(acquired.source.manifest.audioPath, "Audio/Song.egg");
 assert.equal(acquired.source.manifest.difficulties[0]?.path, "Maps/Expert.dat");
 assert.deepEqual([...acquired.source.readEntry("audio/song.EGG")], [79, 103, 103, 83]);
@@ -215,10 +215,10 @@ const lockedFixtureHashes = Object.freeze({
     })
   }),
   3: Object.freeze({
-    sourceHash: "f40cee1a11222c29ccdabb3193c83b9d25a837a4",
-    archiveSha1: "1b8f83e061f3c7138c25a4bc5733a845cad6884d",
+    sourceHash: "044f279f3d43ef84380b9679b7c02cdb417765c1",
+    archiveSha1: "b975d84fb03d1d34dea67b83e3df1566fb880ca2",
     entries: Object.freeze({
-      "Info.dat": "56c846c06f9989bc0a29e21173e8897334efc56a766594c0c4587a04625ae9c1",
+      "Info.dat": "87adbc30e824f792ef83f83b8c984821c128bdcad2b58aa4c3da6ab28755d964",
       "Audio/Song.egg": "68d9ed2adb24458ff173db06b41b9d1b6e228764c457030d63fad11b02bfae1e",
       "Cover.PNG": "0f4636c78f65d3639ece5a064b5ae753e3408614a14fb18ab4d7540d2c248543",
       "Maps/Expert.dat": "fe7429c7d72f85a1c92151a845925c3dc0560ea44d5f266fedfaae8b74547758"

@@ -1,14 +1,15 @@
 // @ts-check
 
-import { Sha1, sha1Hex as sharedSha1Hex } from "@aerobeat/web-hash";
+import { Sha1, Sha256, sha1Hex as sharedSha1Hex } from "@aerobeat/web-hash";
 import { Inflate } from "fflate";
 import { BeatSaverVendorError } from "./errors.js";
 import { finiteNumber, optionalArray, optionalRecord, optionalString, requireRecord } from "./normalize.js";
+import { resolveDifficultyNotePalette } from "./note-palette.js";
 
 /** @typedef {Readonly<{maxArchiveBytes: number, maxEntries: number, maxEntryBytes: number, maxExpandedBytes: number, maxCompressionRatio: number, maxInfoBytes: number}>} BeatSaverArchiveLimits */
 /** @typedef {Readonly<{path: string, basename: string, extension: string, directory: boolean, compressedBytes: number, expandedBytes: number, compressionMethod: number, infoDat: boolean, audioCandidate: boolean, coverCandidate: boolean, difficultyCandidate: boolean}>} BeatSaverArchiveEntry */
-/** @typedef {Readonly<{characteristic: "Standard", difficulty: string, difficultyRank: number, path: string, noteJumpMovementSpeed: number, noteJumpStartBeatOffset: number}>} BeatSaverSourceDifficulty */
-/** @typedef {Readonly<{schemaId: "aerobeat.beatsaver-source-manifest.v1", sourceFormatMajor: 2 | 3 | 4, infoPath: string, hashInputPaths: readonly string[], songName: string, songSubName: string, songAuthorName: string, levelAuthorName: string, audioPath: string, coverPath: string, bpm: number, previewStartSeconds: number, previewDurationSeconds: number, difficulties: readonly BeatSaverSourceDifficulty[], entries: readonly BeatSaverArchiveEntry[], archiveBytes: number, expandedBytes: number}>} BeatSaverSourceManifest */
+/** @typedef {Readonly<{characteristic: "Standard", difficulty: string, difficultyRank: number, path: string, beatMapFormatMajor: 2 | 3 | 4, beatMapFormat: "v2" | "v3" | "v4", beatMapVersion: string | null, notePalette: import("@aerobeat/web-contracts/note-palette-contracts").AeroSourceNotePalette | null, noteJumpMovementSpeed: number, noteJumpStartBeatOffset: number}>} BeatSaverSourceDifficulty */
+/** @typedef {Readonly<{schemaId: "aerobeat.beatsaver-source-manifest.v2", infoFormatMajor: 2 | 4, infoFormat: "v2" | "v4", infoVersion: string | null, infoPath: string, hashInputPaths: readonly string[], songName: string, songSubName: string, songAuthorName: string, levelAuthorName: string, audioPath: string, coverPath: string, bpm: number, previewStartSeconds: number, previewDurationSeconds: number, difficulties: readonly BeatSaverSourceDifficulty[], entries: readonly BeatSaverArchiveEntry[], archiveBytes: number, expandedBytes: number}>} BeatSaverSourceManifest */
 // `hashInputPaths` is an ordered provider-hash sequence, not a set. Duplicate
 // entries are significant for v4 maps that share one lightshow across difficulties.
 /** @typedef {Readonly<{manifest: BeatSaverSourceManifest, listEntryPaths: () => readonly string[], readEntry: (path: string) => Uint8Array}>} BeatSaverSourceBundle */
@@ -57,7 +58,7 @@ export async function inspectBeatSaverArchive(input, options = {}) {
   const infoBytes = dataByPath.get(pathKey(infoEntry.path));
   if (infoBytes === undefined) failArchive("Info.dat could not be read");
   const info = parseJson(infoBytes, "Info.dat");
-  const manifest = buildSourceManifest(info, infoEntry.path, centralEntries, archiveBytes.byteLength);
+  const manifest = buildSourceManifest(info, infoBytes, infoEntry.path, centralEntries, dataByPath, archiveBytes.byteLength);
   const availablePaths = Object.freeze(centralEntries.filter((entry) => !entry.directory).map((entry) => entry.path));
   return Object.freeze({
     manifest,
@@ -235,13 +236,18 @@ function parseCentralDirectory(bytes, limits) {
 
 /**
  * @param {Record<string, unknown>} info Parsed Info.dat.
+ * @param {Uint8Array} infoBytes Exact Info.dat bytes.
  * @param {string} infoPath Info path.
  * @param {readonly InternalArchiveEntry[]} entries Entries.
+ * @param {ReadonlyMap<string, Uint8Array>} dataByPath Expanded entry bytes by normalized path.
  * @param {number} archiveBytes Archive bytes.
  * @returns {BeatSaverSourceManifest} Manifest.
  */
-function buildSourceManifest(info, infoPath, entries, archiveBytes) {
-  const sourceFormatMajor = detectFormatMajor(info);
+function buildSourceManifest(info, infoBytes, infoPath, entries, dataByPath, archiveBytes) {
+  const infoDeclaration = detectInfoFormat(info);
+  const sourceFormatMajor = infoDeclaration.major;
+  const infoFormat = /** @type {"v2" | "v4"} */ (`v${sourceFormatMajor}`);
+  const infoHash = `sha256:${new Sha256().update(infoBytes).digestHex()}`;
   const song = optionalRecord(info.song);
   const audio = optionalRecord(info.audio);
   const difficultyPayloads = collectDifficultyPayloads(info);
@@ -284,11 +290,29 @@ function buildSourceManifest(info, infoPath, entries, archiveBytes) {
     if (seenStandardDifficulties.has(difficulty)) throw new BeatSaverVendorError("provider_payload", `Standard difficulty ${difficulty} is duplicated`);
     seenStandardDifficulties.add(difficulty);
     const resolvedPath = resolveArchivePath(path, entries, "difficulty");
+    const difficultyBytes = dataByPath.get(pathKey(resolvedPath));
+    if (difficultyBytes === undefined) throw new BeatSaverVendorError("provider_payload", "Referenced difficulty could not be read");
+    const difficultyDocument = parseJson(difficultyBytes, "difficulty beatmap");
+    const beatmapDeclaration = detectBeatmapFormat(difficultyDocument);
+    if ((sourceFormatMajor === 2 && beatmapDeclaration.major === 4) || (sourceFormatMajor === 4 && beatmapDeclaration.major !== 4)) {
+      throw new BeatSaverVendorError("unsupported", "Info.dat and referenced difficulty formats are incompatible");
+    }
+    const difficultyHash = `sha256:${new Sha256().update(difficultyBytes).digestHex()}`;
+    const notePalette = resolveDifficultyNotePalette(info, payload, {
+      infoFormat,
+      infoVersion: infoDeclaration.version,
+      infoHash,
+      difficultyHash
+    });
     difficulties.push(Object.freeze({
       characteristic: "Standard",
       difficulty,
       difficultyRank: Math.trunc(finiteNumber(payload.difficultyRank ?? payload._difficultyRank)),
       path: resolvedPath,
+      beatMapFormatMajor: beatmapDeclaration.major,
+      beatMapFormat: /** @type {"v2" | "v3" | "v4"} */ (`v${beatmapDeclaration.major}`),
+      beatMapVersion: beatmapDeclaration.version,
+      notePalette,
       noteJumpMovementSpeed: finiteNumber(payload.noteJumpMovementSpeed ?? payload._noteJumpMovementSpeed),
       noteJumpStartBeatOffset: finiteNumber(payload.noteJumpStartBeatOffset ?? payload._noteJumpStartBeatOffset)
     }));
@@ -303,8 +327,10 @@ function buildSourceManifest(info, infoPath, entries, archiveBytes) {
   const publicEntries = entries.map(({ originalPath: _originalPath, flags: _flags, crc32: _crc32, localHeaderOffset: _localHeaderOffset, dataOffset: _dataOffset, dataEnd: _dataEnd, recordEnd: _recordEnd, ...entry }) => Object.freeze(entry));
   const expandedBytes = entries.reduce((sum, entry) => sum + (entry.directory ? 0 : entry.expandedBytes), 0);
   return Object.freeze({
-    schemaId: "aerobeat.beatsaver-source-manifest.v1",
-    sourceFormatMajor,
+    schemaId: "aerobeat.beatsaver-source-manifest.v2",
+    infoFormatMajor: sourceFormatMajor,
+    infoFormat,
+    infoVersion: infoDeclaration.version,
     infoPath,
     hashInputPaths: Object.freeze(hashInputPaths),
     songName: optionalString(song.title) || optionalString(info.songName) || optionalString(info._songName),
@@ -357,26 +383,54 @@ function canonicalStandardDifficulty(value) {
   return difficulty;
 }
 
-/** @param {Record<string, unknown>} info @returns {2 | 3 | 4} */
-function detectFormatMajor(info) {
-  const declarationKeys = ["version", "_version"].filter((key) => Object.hasOwn(info, key));
-  if (declarationKeys.length > 0) {
-    /** @type {Set<2 | 3 | 4>} */
-    const majors = new Set();
-    for (const key of declarationKeys) {
-      const declaration = info[key];
-      if (typeof declaration !== "string") throw unsupportedVersionDeclaration();
-      const match = /^(2|3|4)\.[0-9]+\.[0-9]+$/u.exec(declaration);
-      if (!match) throw unsupportedVersionDeclaration();
-      majors.add(/** @type {2 | 3 | 4} */ (Number(match[1])));
-    }
-    if (majors.size !== 1) throw unsupportedVersionDeclaration();
-    return /** @type {2 | 3 | 4} */ ([...majors][0]);
-  }
-  if (Object.hasOwn(info, "_difficultyBeatmapSets")) return 2;
-  if (Object.hasOwn(info, "song") || Object.hasOwn(info, "audio") || Object.hasOwn(info, "difficultyBeatmaps")) return 4;
-  if (Object.hasOwn(info, "difficultyBeatmapSets")) return 3;
+/** @typedef {Readonly<{major: 2 | 4, version: string | null}>} InfoFormatDeclaration */
+/** @typedef {Readonly<{major: 2 | 3 | 4, version: string | null}>} BeatmapFormatDeclaration */
+
+/** @param {Record<string, unknown>} info @returns {InfoFormatDeclaration} */
+function detectInfoFormat(info) {
+  const declared = parseVersionDeclarations(info, new Set([2, 4]));
+  if (declared !== null) return /** @type {InfoFormatDeclaration} */ (declared);
+  if (Object.hasOwn(info, "_difficultyBeatmapSets") || Object.hasOwn(info, "difficultyBeatmapSets")) return Object.freeze({ major: /** @type {const} */ (2), version: null });
+  if (Object.hasOwn(info, "song") || Object.hasOwn(info, "audio") || Object.hasOwn(info, "difficultyBeatmaps")) return Object.freeze({ major: /** @type {const} */ (4), version: null });
   throw new BeatSaverVendorError("unsupported", "Unsupported or missing Beat Saber metadata version");
+}
+
+/** @param {Record<string, unknown>} beatmap @returns {BeatmapFormatDeclaration} */
+function detectBeatmapFormat(beatmap) {
+  const declared = parseVersionDeclarations(beatmap, new Set([2, 3, 4]));
+  if (declared !== null) return /** @type {BeatmapFormatDeclaration} */ (declared);
+  if (Object.hasOwn(beatmap, "_notes") || Object.hasOwn(beatmap, "_obstacles")) return Object.freeze({ major: /** @type {const} */ (2), version: null });
+  if (Object.hasOwn(beatmap, "colorNotesData") || Object.hasOwn(beatmap, "obstaclesData")) return Object.freeze({ major: /** @type {const} */ (4), version: null });
+  if (Object.hasOwn(beatmap, "colorNotes") || Object.hasOwn(beatmap, "obstacles")) return Object.freeze({ major: /** @type {const} */ (3), version: null });
+  throw new BeatSaverVendorError("unsupported", "Unsupported or missing Beat Saber difficulty version");
+}
+
+/**
+ * @param {Record<string, unknown>} record
+ * @param {ReadonlySet<number>} supportedMajors
+ * @returns {Readonly<{major: 2 | 3 | 4, version: string}> | null}
+ */
+function parseVersionDeclarations(record, supportedMajors) {
+  const declarationKeys = ["version", "_version"].filter((key) => Object.hasOwn(record, key));
+  if (declarationKeys.length === 0) return null;
+  /** @type {Set<2 | 3 | 4>} */
+  const majors = new Set();
+  /** @type {Map<string, string>} */
+  const versions = new Map();
+  for (const key of declarationKeys) {
+    const declaration = record[key];
+    if (typeof declaration !== "string") throw unsupportedVersionDeclaration();
+    const match = /^(2|3|4)\.[0-9]+\.[0-9]+$/u.exec(declaration);
+    if (!match) throw unsupportedVersionDeclaration();
+    const major = /** @type {2 | 3 | 4} */ (Number(match[1]));
+    if (!supportedMajors.has(major)) throw unsupportedVersionDeclaration();
+    majors.add(major);
+    versions.set(key, declaration);
+  }
+  if (majors.size !== 1) throw unsupportedVersionDeclaration();
+  const version = versions.get("version") ?? versions.get("_version");
+  if (version === undefined) throw unsupportedVersionDeclaration();
+  return Object.freeze({ major: /** @type {2 | 3 | 4} */ ([...majors][0]), version });
 }
 
 /** @returns {BeatSaverVendorError} */

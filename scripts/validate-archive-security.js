@@ -10,7 +10,8 @@ const archiveFailureCodes = [];
 
 for (const major of /** @type {const} */ ([2, 3, 4])) {
   const source = await inspectBeatSaverArchive(createSyntheticBeatSaverZip(major));
-  assert.equal(source.manifest.sourceFormatMajor, major);
+  assert.equal(source.manifest.infoFormatMajor, major === 4 ? 4 : 2);
+  assert.equal(source.manifest.difficulties[0]?.beatMapFormatMajor, major);
   assert.equal(source.manifest.difficulties.length, 1);
   assert.equal(source.manifest.difficulties[0]?.characteristic, "Standard");
 }
@@ -131,7 +132,7 @@ function baseFixtureEntries() {
       _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: [{ _difficulty: "Expert", _difficultyRank: 7, _beatmapFilename: "Maps/Expert.dat" }] }]
     })),
     "song.egg": Uint8Array.of(1, 2, 3, 4),
-    "Maps/Expert.dat": strToU8("{}")
+    "Maps/Expert.dat": strToU8('{"_version":"2.0.0","_notes":[]}')
   };
 }
 

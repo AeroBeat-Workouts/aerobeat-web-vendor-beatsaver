@@ -4,11 +4,12 @@ import { strToU8, zipSync } from "fflate";
 
 /**
  * @param {2 | 3 | 4} major Beat Saber metadata major.
- * @param {{mutateInfo?: (info: Record<string, unknown>) => void}} [options] Test-only Info.dat mutation.
+ * @param {{mutateInfo?: (info: Record<string, unknown>) => void, mutateDifficulty?: (difficulty: Record<string, unknown>) => void}} [options] Test-only document mutation.
  * @returns {Uint8Array} Synthetic ZIP.
  */
 export function createSyntheticBeatSaverZip(major = 2, options = {}) {
   const difficulty = createSyntheticDifficulty(major);
+  options.mutateDifficulty?.(difficulty);
   const info = major === 4 ? {
     version: "4.0.0",
     song: { title: "Synthetic Four", subTitle: "", author: "AeroBeat" },
@@ -16,14 +17,14 @@ export function createSyntheticBeatSaverZip(major = 2, options = {}) {
     coverImageFilename: "Cover.PNG",
     difficultyBeatmaps: [{ characteristic: "Standard", difficulty: "Expert", beatmapDataFilename: "Maps/Expert.dat", noteJumpMovementSpeed: 14, noteJumpStartBeatOffset: 0 }]
   } : major === 3 ? {
-    version: "3.0.0",
-    songName: "Synthetic Three",
-    songAuthorName: "AeroBeat",
-    levelAuthorName: "Fixture",
-    songFilename: "Audio/Song.egg",
-    coverImageFilename: "Cover.PNG",
-    beatsPerMinute: 128,
-    difficultyBeatmapSets: [{ beatmapCharacteristicName: "Standard", difficultyBeatmaps: [{ difficulty: "Expert", difficultyRank: 7, beatmapFilename: "Maps/Expert.dat", noteJumpMovementSpeed: 14, noteJumpStartBeatOffset: 0 }] }]
+    _version: "2.1.0",
+    _songName: "Synthetic Three",
+    _songAuthorName: "AeroBeat",
+    _levelAuthorName: "Fixture",
+    _songFilename: "Audio/Song.egg",
+    _coverImageFilename: "Cover.PNG",
+    _beatsPerMinute: 128,
+    _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: [{ _difficulty: "Expert", _difficultyRank: 7, _beatmapFilename: "Maps/Expert.dat", _noteJumpMovementSpeed: 14, _noteJumpStartBeatOffset: 0 }] }]
   } : {
     _version: "2.1.0",
     _songName: "Synthetic Two",
@@ -52,7 +53,7 @@ export function createSyntheticBeatSaverZip(major = 2, options = {}) {
  * limited to canonical Standard difficulties.
  *
  * @param {3 | 4} major Beat Saber metadata major.
- * @param {{duplicateDifficulty?: boolean, unsupportedDifficulty?: boolean, misCasedStandard?: boolean}} [options] Semantic mutations.
+ * @param {{duplicateDifficulty?: boolean, unsupportedDifficulty?: boolean, misCasedStandard?: boolean, mutateInfo?: (info: Record<string, unknown>) => void}} [options] Semantic mutations.
  * @returns {Uint8Array} Synthetic ZIP.
  */
 export function createMixedCharacteristicBeatSaverZip(major, options = {}) {
@@ -77,18 +78,19 @@ export function createMixedCharacteristicBeatSaverZip(major, options = {}) {
     coverImageFilename: "Cover.PNG",
     difficultyBeatmaps: payloads.map((entry) => ({ characteristic: entry.characteristic, difficulty: entry.difficulty, difficultyRank: entry.rank, beatmapDataFilename: entry.path, lightshowDataFilename: "Maps/SharedLightshow.dat", noteJumpMovementSpeed: 14, noteJumpStartBeatOffset: 0 }))
   } : {
-    version: "3.0.0",
-    songName: "Mixed Three",
-    songAuthorName: "AeroBeat",
-    levelAuthorName: "Fixture",
-    songFilename: "Audio/Song.egg",
-    coverImageFilename: "Cover.PNG",
-    beatsPerMinute: 128,
-    difficultyBeatmapSets: [
-      ...nonstandard.map((entry) => ({ beatmapCharacteristicName: entry.characteristic, difficultyBeatmaps: [{ difficulty: entry.difficulty, difficultyRank: entry.rank, beatmapFilename: entry.path, lightshowDataFilename: "Maps/SharedLightshow.dat", noteJumpMovementSpeed: 14, noteJumpStartBeatOffset: 0 }] })),
-      ...["Standard", "standard"].map((characteristic) => ({ beatmapCharacteristicName: characteristic, difficultyBeatmaps: standard.filter((entry) => entry.characteristic === characteristic).map((entry) => ({ difficulty: entry.difficulty, difficultyRank: entry.rank, beatmapFilename: entry.path, lightshowDataFilename: "Maps/SharedLightshow.dat", noteJumpMovementSpeed: 14, noteJumpStartBeatOffset: 0 })) })).filter((set) => set.difficultyBeatmaps.length > 0)
+    _version: "2.1.0",
+    _songName: "Mixed Three",
+    _songAuthorName: "AeroBeat",
+    _levelAuthorName: "Fixture",
+    _songFilename: "Audio/Song.egg",
+    _coverImageFilename: "Cover.PNG",
+    _beatsPerMinute: 128,
+    _difficultyBeatmapSets: [
+      ...nonstandard.map((entry) => ({ _beatmapCharacteristicName: entry.characteristic, _difficultyBeatmaps: [{ _difficulty: entry.difficulty, _difficultyRank: entry.rank, _beatmapFilename: entry.path, lightshowDataFilename: "Maps/SharedLightshow.dat", _noteJumpMovementSpeed: 14, _noteJumpStartBeatOffset: 0 }] })),
+      ...["Standard", "standard"].map((characteristic) => ({ _beatmapCharacteristicName: characteristic, _difficultyBeatmaps: standard.filter((entry) => entry.characteristic === characteristic).map((entry) => ({ _difficulty: entry.difficulty, _difficultyRank: entry.rank, _beatmapFilename: entry.path, lightshowDataFilename: "Maps/SharedLightshow.dat", _noteJumpMovementSpeed: 14, _noteJumpStartBeatOffset: 0 })) })).filter((set) => set._difficultyBeatmaps.length > 0)
     ]
   };
+  options.mutateInfo?.(/** @type {Record<string, unknown>} */ (info));
   /** @type {Record<string, [Uint8Array, import("fflate").ZipOptions]>} */
   const entries = {
     "Info.dat": syntheticZipEntry(strToU8(JSON.stringify(info))),
