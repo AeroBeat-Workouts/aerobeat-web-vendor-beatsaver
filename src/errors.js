@@ -3,7 +3,7 @@
 /**
  * Stable vendor error categories suitable for UI and telemetry.
  *
- * @typedef {"invalid_request" | "transport" | "timeout" | "aborted" | "http" | "provider_payload" | "integrity" | "archive" | "unsupported"} BeatSaverVendorErrorCode
+ * @typedef {"invalid_request" | "transport" | "timeout" | "aborted" | "http" | "provider_payload" | "integrity" | "archive" | "unsupported" | "relative_njs_events_unsupported"} BeatSaverVendorErrorCode
  */
 
 /**

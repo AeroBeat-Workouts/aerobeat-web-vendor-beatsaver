@@ -16,6 +16,11 @@ for (const major of /** @type {const} */ ([2, 3, 4])) {
   assert.equal(source.manifest.difficulties[0]?.characteristic, "Standard");
 }
 
+const malformedCamelLegacyFallback=await inspectBeatSaverArchive(createSyntheticBeatSaverZip(2,{mutateInfo(info){info.difficultyBeatmapSets={malformed:true};const sets=/** @type {Record<string,unknown>[]} */(info._difficultyBeatmapSets);sets[0].difficultyBeatmaps={malformed:true};const maps=/** @type {Record<string,unknown>[]} */(sets[0]._difficultyBeatmaps),entry=maps[0];entry.noteJumpMovementSpeed="invalid";entry.noteJumpStartBeatOffset=null;}}));
+assert.deepEqual([malformedCamelLegacyFallback.manifest.difficulties[0]?.noteJumpMovementSpeed,malformedCamelLegacyFallback.manifest.difficulties[0]?.noteJumpStartBeatOffset],[14,0],"malformed present camel fields cannot mask valid legacy underscore timing");
+await assert.rejects(()=>inspectBeatSaverArchive(createSyntheticBeatSaverZip(2,{mutateInfo(info){const sets=/** @type {Record<string,unknown>[]} */(info._difficultyBeatmapSets),maps=/** @type {Record<string,unknown>[]} */(sets[0]._difficultyBeatmaps),entry=maps[0];entry._noteJumpMovementSpeed="invalid";delete entry.noteJumpMovementSpeed;}})),(error)=>error instanceof Error&&"code" in error&&error.code==="provider_payload", "invalid/missing timing never coerces to zero");
+await assert.rejects(()=>inspectBeatSaverArchive(createSyntheticBeatSaverZip(4,{mutateDifficulty(map){map.version="4.1.0";map.njsEvents=[{b:1,i:0}];map.njsEventData=[{p:1}];}})),(error)=>error instanceof Error&&"code" in error&&error.code==="relative_njs_events_unsupported");
+
 for (const major of /** @type {const} */ ([3, 4])) {
   await assert.rejects(() => inspectBeatSaverArchive(createMixedCharacteristicBeatSaverZip(major, { duplicateDifficulty: true })), (error) => error instanceof Error && "code" in error && error.code === "provider_payload" && /Standard difficulty ExpertPlus is duplicated/u.test(error.message), `v${major} duplicate normalized Standard identity must fail deterministically`);
   await assert.rejects(() => inspectBeatSaverArchive(createMixedCharacteristicBeatSaverZip(major, { unsupportedDifficulty: true })), (error) => error instanceof Error && "code" in error && error.code === "unsupported" && error.message === "Standard difficulty label is unsupported" && !error.message.includes("Master"), `v${major} unsupported Standard difficulty must fail without echoing provider payload`);
@@ -129,7 +134,7 @@ function baseFixtureEntries() {
       _levelAuthorName: "Fixture",
       _songFilename: "song.egg",
       _beatsPerMinute: 120,
-      _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: [{ _difficulty: "Expert", _difficultyRank: 7, _beatmapFilename: "Maps/Expert.dat" }] }]
+      _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: [{ _difficulty: "Expert", _difficultyRank: 7, _beatmapFilename: "Maps/Expert.dat", _noteJumpMovementSpeed: 14, _noteJumpStartBeatOffset: 0 }] }]
     })),
     "song.egg": Uint8Array.of(1, 2, 3, 4),
     "Maps/Expert.dat": strToU8('{"_version":"2.0.0","_notes":[]}')
@@ -147,7 +152,7 @@ function createDescriptorZip() {
     _songName: "Descriptor Fixture",
     _songFilename: "song.egg",
     _beatsPerMinute: 120,
-    _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: [{ _difficulty: "Expert", _difficultyRank: 7, _beatmapFilename: "Maps/Expert.dat" }] }]
+    _difficultyBeatmapSets: [{ _beatmapCharacteristicName: "Standard", _difficultyBeatmaps: [{ _difficulty: "Expert", _difficultyRank: 7, _beatmapFilename: "Maps/Expert.dat", _noteJumpMovementSpeed: 14, _noteJumpStartBeatOffset: 0 }] }]
   }));
   return new Promise((resolve, reject) => {
     /** @type {Uint8Array[]} */

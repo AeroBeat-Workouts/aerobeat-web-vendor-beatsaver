@@ -190,7 +190,7 @@ export function createSyntheticMapPayload(hash, downloadUrl = "https://cdn.examp
     metadata: { songName: "Synthetic", songSubName: "", songAuthorName: "AeroBeat", levelAuthorName: "Fixture", bpm: 128, duration: 60 },
     uploader: { id: 1, name: "Fixture", avatar: "https://cdn.example.invalid/avatar.png" },
     stats: { downloads: 10, plays: 5, upvotes: 4, downvotes: 1, score: 0.8 },
-    versions: [{ hash, key: mapId, state: "Published", createdAt: "2026-01-01T00:00:00Z", downloadURL: downloadUrl, coverURL: "https://cdn.example.invalid/cover.png", previewURL: "https://cdn.example.invalid/preview.ogg", diffs: [{ characteristic: "Standard", difficulty: "Expert", notes: 20, bombs: 1, obstacles: 2, njs: 14, nps: 2, seconds: 60 }] }],
+    versions: [{ hash, key: mapId, state: "Published", createdAt: "2026-01-01T00:00:00Z", downloadURL: downloadUrl, coverURL: "https://cdn.example.invalid/cover.png", previewURL: "https://cdn.example.invalid/preview.ogg", diffs: [{ characteristic: "Standard", difficulty: "Expert", notes: 20, bombs: 1, obstacles: 2, njs: 14, offset: 1, nps: 2, seconds: 60 }] }],
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     uploaded: "2026-01-01T00:00:00Z",

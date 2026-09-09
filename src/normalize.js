@@ -2,7 +2,7 @@
 
 import { BeatSaverVendorError } from "./errors.js";
 
-/** @typedef {Readonly<{characteristic: string, difficulty: string, stars: number, notes: number, bombs: number, obstacles: number, njs: number, nps: number, durationSeconds: number, environment: string, chroma: boolean, cinema: boolean, mappingExtensions: boolean}>} BeatSaverDifficulty */
+/** @typedef {Readonly<{characteristic: string, difficulty: string, stars: number, notes: number, bombs: number, obstacles: number, njs: number, offset: number, nps: number, durationSeconds: number, environment: string, chroma: boolean, cinema: boolean, mappingExtensions: boolean}>} BeatSaverDifficulty */
 /** @typedef {Readonly<{hash: string, key: string, state: string, createdAt: string, downloadUrl: string, coverUrl: string, previewUrl: string, sageScore: number, difficulties: readonly BeatSaverDifficulty[]}>} BeatSaverVersion */
 /** @typedef {Readonly<{providerId: "beatsaver", mapId: string, mapKey: string, mapName: string, description: string, tags: readonly string[], songName: string, songSubName: string, songAuthorName: string, levelAuthorName: string, bpm: number, durationSeconds: number, uploader: Readonly<{id: number, name: string, avatarUrl: string}>, stats: Readonly<{downloads: number, plays: number, upvotes: number, downvotes: number, score: number}>, versions: readonly BeatSaverVersion[], createdAt: string, updatedAt: string, uploadedAt: string, lastPublishedAt: string, ranked: boolean, qualified: boolean, automapper: boolean, declaredAi: boolean}>} BeatSaverMap */
 /** @typedef {Readonly<{source: "search" | "latest", maps: readonly BeatSaverMap[], page: number, pages: number, total: number}>} BeatSaverMapCollection */
@@ -184,7 +184,8 @@ function normalizeDifficulty(payload, context) {
     notes: nonNegativeInteger(record.notes),
     bombs: nonNegativeInteger(record.bombs),
     obstacles: nonNegativeInteger(record.obstacles),
-    njs: finiteNumber(record.njs),
+    njs: boundedFiniteNumber(record.njs, 0, 1_000),
+    offset: boundedFiniteNumber(record.offset, -1_000, 1_000),
     nps: finiteNumber(record.nps),
     durationSeconds: finiteNumber(record.seconds),
     environment: optionalString(record.environment),
@@ -224,6 +225,8 @@ function requireStringPattern(value, context, pattern) {
 }
 /** @param {unknown} value @returns {number} */
 export function finiteNumber(value) { return typeof value === "number" && Number.isFinite(value) ? value : 0; }
+/** @param {unknown} value @param {number} minimum @param {number} maximum @returns {number} */
+function boundedFiniteNumber(value, minimum, maximum) { return typeof value === "number" && Number.isFinite(value) ? Math.max(minimum, Math.min(maximum, value)) : 0; }
 /** @param {unknown} value @returns {number} */
 export function nonNegativeInteger(value) { return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0; }
 /** @param {unknown} value @returns {boolean} */

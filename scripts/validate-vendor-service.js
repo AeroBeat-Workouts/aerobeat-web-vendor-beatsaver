@@ -60,6 +60,7 @@ const search = await service.searchMaps({ text: "Synthetic", difficulty: "Expert
 assert.equal(search.maps.length, 1);
 assert.equal(search.maps[0]?.mapId, "A1B2C");
 assert.equal(search.maps[0]?.versions[0]?.difficulties[0]?.difficulty, "Expert");
+assert.deepEqual([search.maps[0]?.versions[0]?.difficulties[0]?.njs,search.maps[0]?.versions[0]?.difficulties[0]?.offset],[14,1],"browse normalization preserves bounded finite NJS/offset for cross-check only");
 assert.equal((await service.listLatestMaps()).maps.length, 1);
 const detail = await service.getMapById("a1b2c");
 assert.equal(detail.mapKey, "A1B2C");

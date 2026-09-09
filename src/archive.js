@@ -294,6 +294,9 @@ function buildSourceManifest(info, infoBytes, infoPath, entries, dataByPath, arc
     if (difficultyBytes === undefined) throw new BeatSaverVendorError("provider_payload", "Referenced difficulty could not be read");
     const difficultyDocument = parseJson(difficultyBytes, "difficulty beatmap");
     const beatmapDeclaration = detectBeatmapFormat(difficultyDocument);
+    if (beatmapDeclaration.major === 4 && hasRelativeNjsEvents(difficultyDocument)) {
+      throw new BeatSaverVendorError("relative_njs_events_unsupported", "Beat Saber v4.1 relative NJS events are unsupported");
+    }
     if ((sourceFormatMajor === 2 && beatmapDeclaration.major === 4) || (sourceFormatMajor === 4 && beatmapDeclaration.major !== 4)) {
       throw new BeatSaverVendorError("unsupported", "Info.dat and referenced difficulty formats are incompatible");
     }
@@ -313,8 +316,8 @@ function buildSourceManifest(info, infoBytes, infoPath, entries, dataByPath, arc
       beatMapFormat: /** @type {"v2" | "v3" | "v4"} */ (`v${beatmapDeclaration.major}`),
       beatMapVersion: beatmapDeclaration.version,
       notePalette,
-      noteJumpMovementSpeed: finiteNumber(payload.noteJumpMovementSpeed ?? payload._noteJumpMovementSpeed),
-      noteJumpStartBeatOffset: finiteNumber(payload.noteJumpStartBeatOffset ?? payload._noteJumpStartBeatOffset)
+      noteJumpMovementSpeed: requiredPositiveFiniteAlias(payload, "noteJumpMovementSpeed", "_noteJumpMovementSpeed", "note jump movement speed"),
+      noteJumpStartBeatOffset: requiredFiniteAlias(payload, "noteJumpStartBeatOffset", "_noteJumpStartBeatOffset", "note jump start beat offset")
     }));
   }
   if (difficulties.length === 0) throw new BeatSaverVendorError("unsupported", "BeatSaver archive has no supported Standard difficulties");
@@ -339,7 +342,7 @@ function buildSourceManifest(info, infoBytes, infoPath, entries, dataByPath, arc
     levelAuthorName: optionalString(info.levelAuthorName) || optionalString(info._levelAuthorName),
     audioPath,
     coverPath,
-    bpm: finiteNumber(audio.bpm ?? info.beatsPerMinute ?? info._beatsPerMinute),
+    bpm: requiredPositiveFiniteCandidates([[audio, "bpm"], [info, "beatsPerMinute"], [info, "_beatsPerMinute"]], "beats per minute"),
     previewStartSeconds: finiteNumber(audio.previewStartTime ?? info.previewStartTime ?? info._previewStartTime),
     previewDurationSeconds: finiteNumber(audio.previewDuration ?? info.previewDuration ?? info._previewDuration),
     difficulties: Object.freeze(difficulties),
@@ -349,17 +352,35 @@ function buildSourceManifest(info, infoBytes, infoPath, entries, dataByPath, arc
   });
 }
 
+/** @param {Record<string, unknown>} record @param {string} modern @param {string} legacy @param {string} label */
+function requiredFiniteAlias(record, modern, legacy, label) {
+  for (const key of [modern, legacy]) {
+    if (!Object.hasOwn(record, key)) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (descriptor && "value" in descriptor && descriptor.enumerable && typeof descriptor.value === "number" && Number.isFinite(descriptor.value)) return descriptor.value;
+  }
+  throw new BeatSaverVendorError("provider_payload", `Standard difficulty ${label} must be present and finite`);
+}
+/** @param {Record<string, unknown>} record @param {string} modern @param {string} legacy @param {string} label */
+function requiredPositiveFiniteAlias(record, modern, legacy, label) { const value = requiredFiniteAlias(record, modern, legacy, label); if (value <= 0) throw new BeatSaverVendorError("provider_payload", `Standard difficulty ${label} must be positive`); return value; }
+/** @param {readonly [Record<string, unknown>, string][]} candidates @param {string} label */
+function requiredPositiveFiniteCandidates(candidates, label) { for (const [record, key] of candidates) { if (!Object.hasOwn(record, key)) continue; const descriptor = Object.getOwnPropertyDescriptor(record, key); if (descriptor && "value" in descriptor && descriptor.enumerable && typeof descriptor.value === "number" && Number.isFinite(descriptor.value) && descriptor.value > 0) return descriptor.value; } throw new BeatSaverVendorError("provider_payload", `Info.dat ${label} must be present, finite and positive`); }
+/** @param {Record<string, unknown>} beatmap */
+function hasRelativeNjsEvents(beatmap) { return ["njsEvents", "njsEventData", "_njsEvents"].some((key) => Object.hasOwn(beatmap, key) && Array.isArray(beatmap[key]) && beatmap[key].length > 0); }
+
 /** @param {Record<string, unknown>} info @returns {readonly Record<string, unknown>[]} */
 function collectDifficultyPayloads(info) {
   const direct = optionalArray(info.difficultyBeatmaps).map((entry) => requireRecord(entry, "difficultyBeatmaps[]"));
   if (direct.length > 0) return direct;
-  const sets = optionalArray(info.difficultyBeatmapSets ?? info._difficultyBeatmapSets);
+  const modernSets=optionalArray(info.difficultyBeatmapSets);
+  const sets = modernSets.length>0?modernSets:optionalArray(info._difficultyBeatmapSets);
   /** @type {Record<string, unknown>[]} */
   const results = [];
   for (const setValue of sets) {
     const set = requireRecord(setValue, "difficultyBeatmapSets[]");
     const characteristic = optionalString(set.beatmapCharacteristicName) || optionalString(set._beatmapCharacteristicName);
-    for (const difficultyValue of optionalArray(set.difficultyBeatmaps ?? set._difficultyBeatmaps)) {
+    const modernDifficulties=optionalArray(set.difficultyBeatmaps);
+    for (const difficultyValue of (modernDifficulties.length>0?modernDifficulties:optionalArray(set._difficultyBeatmaps))) {
       const difficulty = { ...requireRecord(difficultyValue, "difficultyBeatmaps[]") };
       if (difficulty.characteristic === undefined && difficulty.beatmapCharacteristicName === undefined && difficulty._beatmapCharacteristicName === undefined) difficulty.characteristic = characteristic;
       results.push(difficulty);
