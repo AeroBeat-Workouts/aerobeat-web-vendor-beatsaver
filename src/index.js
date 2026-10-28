@@ -14,6 +14,7 @@ export {
   defaultBeatSaverArchiveLimits,
   inspectBeatSaverArchive,
   normalizeEntryPath,
+  rebuildSourceFromEntries,
   sha1Hex
 } from "./archive.js";
 export {

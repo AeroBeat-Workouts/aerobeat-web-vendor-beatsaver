@@ -243,7 +243,7 @@ function parseCentralDirectory(bytes, limits) {
  * @param {number} archiveBytes Archive bytes.
  * @returns {BeatSaverSourceManifest} Manifest.
  */
-function buildSourceManifest(info, infoBytes, infoPath, entries, dataByPath, archiveBytes) {
+function buildSourceManifest(info, infoBytes, infoPath, entries, dataByPath, archiveBytes, missingCoverAllowed = false) {
   const infoDeclaration = detectInfoFormat(info);
   const sourceFormatMajor = infoDeclaration.major;
   const infoFormat = /** @type {"v2" | "v4"} */ (`v${sourceFormatMajor}`);
@@ -326,7 +326,9 @@ function buildSourceManifest(info, infoBytes, infoPath, entries, dataByPath, arc
   if (!audioName) throw new BeatSaverVendorError("provider_payload", "Info.dat does not reference song audio");
   const coverName = optionalString(info.coverImageFilename) || optionalString(info._coverImageFilename);
   const audioPath = resolveArchivePath(audioName, entries, "audio");
-  const coverPath = coverName ? resolveArchivePath(coverName, entries, "cover") : "";
+  // A source rebuilt from cached entries has no cover: the cover is not a conversion input
+  // and is never cached, so an absent cover resolves to an empty path instead of failing.
+  const coverPath = coverName ? resolveCoverPath(coverName, entries, missingCoverAllowed) : "";
   const publicEntries = entries.map(({ originalPath: _originalPath, flags: _flags, crc32: _crc32, localHeaderOffset: _localHeaderOffset, dataOffset: _dataOffset, dataEnd: _dataEnd, recordEnd: _recordEnd, ...entry }) => Object.freeze(entry));
   const expandedBytes = entries.reduce((sum, entry) => sum + (entry.directory ? 0 : entry.expandedBytes), 0);
   return Object.freeze({
@@ -460,6 +462,81 @@ function unsupportedVersionDeclaration() {
 }
 
 /** @param {string} requested @param {readonly InternalArchiveEntry[]} entries @param {string} role @returns {string} */
+/**
+ * Rebuild the source interface from entry bytes that were cached at import time, so a song
+ * imported from a local ZIP can be converted again without the original archive and without
+ * any extra storage. The cached bytes are byte-identical to the archive entries, and the map
+ * hash is computed over Info.dat plus its hash-input paths, so `computeBeatSaverMapHash` on the
+ * rebuilt source returns the same provider version hash as the original import.
+ *
+ * The cover image is not a conversion input and is never cached, so a missing cover resolves to
+ * an empty `coverPath`. `archiveBytes` reports the supplied byte total because no archive exists.
+ *
+ * @param {readonly Readonly<{path: string, bytes: Uint8Array}>[]} input Cached entries.
+ * @returns {Promise<BeatSaverSourceBundle>} Rebuilt source bundle.
+ */
+export async function rebuildSourceFromEntries(input) {
+  if (!Array.isArray(input) || input.length === 0) throw new BeatSaverVendorError("invalid_request", "Cached source entries are required");
+  /** @type {Map<string, Uint8Array>} */
+  const dataByPath = new Map();
+  /** @type {Record<string, unknown>[]} */
+  const records = [];
+  for (const entry of input) {
+    if (entry === null || typeof entry !== "object") throw new BeatSaverVendorError("invalid_request", "Cached source entry must be an object");
+    const rawPath = /** @type {{path?: unknown, bytes?: unknown}} */ (entry).path;
+    const bytes = /** @type {{bytes?: unknown}} */ (entry).bytes;
+    if (typeof rawPath !== "string" || rawPath.length === 0 || rawPath.length > 1024) throw new BeatSaverVendorError("invalid_request", "Cached source entry path is invalid");
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) throw new BeatSaverVendorError("invalid_request", "Cached source entry bytes are invalid");
+    const path = normalizeEntryPath(rawPath);
+    const key = pathKey(path);
+    if (dataByPath.has(key)) throw new BeatSaverVendorError("invalid_request", "Cached source entry paths collide after case and Unicode normalization");
+    dataByPath.set(key, bytes);
+    const basename = path.slice(path.lastIndexOf("/") + 1);
+    const extension = basename.includes(".") ? basename.slice(basename.lastIndexOf(".") + 1).toLowerCase() : "";
+    // Only the descriptor fields the manifest builder reads are needed; no archive offsets exist.
+    records.push(Object.freeze({
+      path, basename, extension, directory: false,
+      compressedBytes: bytes.byteLength, expandedBytes: bytes.byteLength, compressionMethod: 0,
+      infoDat: basename.toLowerCase() === "info.dat",
+      audioCandidate: ["egg", "ogg", "wav", "mp3"].includes(extension),
+      coverCandidate: ["png", "jpg", "jpeg", "webp"].includes(extension),
+      difficultyCandidate: ["dat", "json"].includes(extension) && basename.toLowerCase() !== "info.dat"
+    }));
+  }
+  records.sort((left, right) => pathKey(String(left.path)).localeCompare(pathKey(String(right.path))));
+  const entries = /** @type {readonly BeatSaverArchiveEntry[]} */ (/** @type {readonly Record<string, unknown>[]} */ (records).map((record) => /** @type {BeatSaverArchiveEntry} */ (/** @type {unknown} */ (record))));
+  const infoEntries = records.filter((entry) => entry.infoDat === true);
+  if (infoEntries.length !== 1) throw new BeatSaverVendorError("unsupported", "Cached source must contain exactly one Info.dat", { details: { candidates: infoEntries.length } });
+  const infoPath = String(infoEntries[0].path);
+  const infoBytes = dataByPath.get(pathKey(infoPath));
+  if (infoBytes === undefined) throw new BeatSaverVendorError("invalid_request", "Cached source Info.dat could not be read");
+  const info = parseJson(infoBytes, "Info.dat");
+  const totalBytes = records.reduce((sum, entry) => sum + Number(entry.expandedBytes), 0);
+  const manifest = buildSourceManifest(info, infoBytes, infoPath, /** @type {readonly InternalArchiveEntry[]} */ (/** @type {unknown} */ (entries)), dataByPath, totalBytes, true);
+  const availablePaths = Object.freeze(records.map((entry) => String(entry.path)));
+  return Object.freeze({
+    manifest,
+    listEntryPaths: () => availablePaths,
+    readEntry: (path) => {
+      const normalized = pathKey(normalizeEntryPath(path));
+      const bytes = dataByPath.get(normalized);
+      if (bytes === undefined) throw new BeatSaverVendorError("invalid_request", "Cached source entry does not exist", { details: { path } });
+      return bytes.slice();
+    }
+  });
+}
+
+/** @param {string} requested @param {readonly BeatSaverArchiveEntry[]} entries @param {boolean} missingCoverAllowed */
+function resolveCoverPath(requested, entries, missingCoverAllowed) {
+  const normalized = pathKey(normalizeEntryPath(requested));
+  const match = entries.find((entry) => !entry.directory && pathKey(entry.path) === normalized);
+  if (match === undefined) {
+    if (missingCoverAllowed) return "";
+    throw new BeatSaverVendorError("provider_payload", "Info.dat cover path is absent from archive", { details: { path: requested } });
+  }
+  return match.path;
+}
+
 function resolveArchivePath(requested, entries, role) {
   const normalized = pathKey(normalizeEntryPath(requested));
   const match = entries.find((entry) => !entry.directory && pathKey(entry.path) === normalized);

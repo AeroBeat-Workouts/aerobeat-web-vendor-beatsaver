@@ -1,6 +1,6 @@
 // @ts-check
 
-import { computeBeatSaverMapHash, inspectBeatSaverArchive, sha1ArchiveHex } from "./archive.js";
+import { computeBeatSaverMapHash, inspectBeatSaverArchive, rebuildSourceFromEntries, sha1ArchiveHex } from "./archive.js";
 import { BeatSaverVendorError, toBeatSaverVendorError } from "./errors.js";
 import { buildLatestParameters, buildSearchParameters, normalizeMap, normalizeMapCollection, selectVersion } from "./normalize.js";
 import { BeatSaverTransport } from "./transport.js";
@@ -124,6 +124,27 @@ export class AeroBeatSaverVendorService {
       const sourceHash = await computeBeatSaverMapHash(source);
       return Object.freeze({ providerId: "beatsaver", sourceHash, archiveSha1, source });
     });
+  }
+
+  /**
+   * Rebuild a source interface from entry bytes cached at import time, so a song imported from a
+   * local ZIP can be converted again without the archive and without extra storage.
+   *
+   * @param {readonly Readonly<{path: string, bytes: Uint8Array}>[]} entries Cached entries.
+   * @returns {Promise<BeatSaverSourceBundle>} Rebuilt source.
+   */
+  async rebuildSourceFromEntries(entries) {
+    return this.run("local-rebuild", async () => rebuildSourceFromEntries(entries));
+  }
+
+  /**
+   * The provider version hash of a source interface.
+   *
+   * @param {BeatSaverSourceBundle} source Source interface.
+   * @returns {Promise<string>} Lowercase SHA-1 map hash.
+   */
+  async computeBeatSaverMapHash(source) {
+    return this.run("local-rebuild", async () => computeBeatSaverMapHash(source));
   }
 
   /** @returns {BeatSaverVendorSnapshot} Snapshot. */
