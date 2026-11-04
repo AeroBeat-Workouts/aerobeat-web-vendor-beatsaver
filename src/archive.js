@@ -316,7 +316,7 @@ function buildSourceManifest(info, infoBytes, infoPath, entries, dataByPath, arc
       beatMapFormat: /** @type {"v2" | "v3" | "v4"} */ (`v${beatmapDeclaration.major}`),
       beatMapVersion: beatmapDeclaration.version,
       notePalette,
-      noteJumpMovementSpeed: requiredPositiveFiniteAlias(payload, "noteJumpMovementSpeed", "_noteJumpMovementSpeed", "note jump movement speed"),
+      noteJumpMovementSpeed: resolveNoteJumpMovementSpeed(payload, difficulty),
       noteJumpStartBeatOffset: requiredFiniteAlias(payload, "noteJumpStartBeatOffset", "_noteJumpStartBeatOffset", "note jump start beat offset")
     }));
   }
@@ -363,8 +363,15 @@ function requiredFiniteAlias(record, modern, legacy, label) {
   }
   throw new BeatSaverVendorError("provider_payload", `Standard difficulty ${label} must be present and finite`);
 }
-/** @param {Record<string, unknown>} record @param {string} modern @param {string} legacy @param {string} label */
-function requiredPositiveFiniteAlias(record, modern, legacy, label) { const value = requiredFiniteAlias(record, modern, legacy, label); if (value <= 0) throw new BeatSaverVendorError("provider_payload", `Standard difficulty ${label} must be positive`); return value; }
+/** @param {Record<string, unknown>} record @param {string} difficulty */
+function resolveNoteJumpMovementSpeed(record, difficulty) {
+  // Info v2 (including v3 beatmaps) and v4 share the difficulty-based auto NJS.
+  // See docs/decisions/note-jump-speed-defaults.md for pinned format-reader sources.
+  const absent = !Object.hasOwn(record, "noteJumpMovementSpeed") && !Object.hasOwn(record, "_noteJumpMovementSpeed");
+  const value = absent ? 0 : requiredFiniteAlias(record, "noteJumpMovementSpeed", "_noteJumpMovementSpeed", "note jump movement speed");
+  if (value < 0) throw new BeatSaverVendorError("provider_payload", "Standard difficulty note jump movement speed must be positive");
+  return value === 0 ? (difficulty === "ExpertPlus" ? 16 : difficulty === "Expert" ? 12 : 10) : value;
+}
 /** @param {readonly [Record<string, unknown>, string][]} candidates @param {string} label */
 function requiredPositiveFiniteCandidates(candidates, label) { for (const [record, key] of candidates) { if (!Object.hasOwn(record, key)) continue; const descriptor = Object.getOwnPropertyDescriptor(record, key); if (descriptor && "value" in descriptor && descriptor.enumerable && typeof descriptor.value === "number" && Number.isFinite(descriptor.value) && descriptor.value > 0) return descriptor.value; } throw new BeatSaverVendorError("provider_payload", `Info.dat ${label} must be present, finite and positive`); }
 /** @param {Record<string, unknown>} beatmap */
